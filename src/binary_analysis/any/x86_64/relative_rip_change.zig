@@ -281,6 +281,7 @@ pub fn fix(allocator: std.mem.Allocator, disasm: Disassembler, code: []const u8,
 }
 
 test "jmp/call" {
+    @setRuntimeSafety(false);
     const code: []const u8 = &.{
         0xe8, 0xfb, 0x00, 0x00, 0x00, // call 0x100 ; call rel32
         0xeb, 0x0e, // jmp 0x10 ; jmp rel8
@@ -288,6 +289,7 @@ test "jmp/call" {
         0xff, 0x15, 0x10, 0x00, 0x00, 0x00, // call [rip+0x10] ; call [rip+rel32]
         0xff, 0x25, 0x10, 0x00, 0x00, 0x00, // jmp [rip+0x10] ; jmp [rip+rel32]
     };
+    const base = @intFromPtr(code.ptr);
 
     var disasm = try Disassembler.create(.{});
     defer disasm.deinit();
@@ -296,4 +298,7 @@ test "jmp/call" {
     defer std.testing.allocator.free(res.fixed_code);
 
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0xff, 0x15 }, res.fixed_code[0..2]);
+    const jmp_offset = @as(*u32, @ptrFromInt(@intFromPtr(res.fixed_code[2..].ptr))).*;
+    const jmp_addr = @as(*usize, @ptrFromInt(@intFromPtr(res.fixed_code[jmp_offset..].ptr))).*;
+    try std.testing.expectEqual(base + 0x100, jmp_addr);
 }
