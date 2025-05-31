@@ -33,7 +33,7 @@ pub const Instruction = struct {
     instruction_type: InstructionType,
 };
 
-fn detectInstructionType(id: c_uint, detail: cs.Detail) InstructionType {
+fn detectInstructionType(id: c_uint, detail: *const cs.Detail) InstructionType {
     for (0..detail.groups_count) |i| {
         const group = detail.groups[i];
         switch (group) {
@@ -52,7 +52,7 @@ fn detectInstructionType(id: c_uint, detail: cs.Detail) InstructionType {
     return InstructionType.OTHERS;
 }
 
-fn readIntFromInsAt(insn: cs.Insn, offset: usize, size: usize) isize {
+fn readIntFromInsAt(insn: *const cs.Insn, offset: usize, size: usize) isize {
     @setRuntimeSafety(false);
     const bytes = insn.bytes;
     if (offset + size > bytes.len) {
@@ -75,7 +75,7 @@ fn readIntFromInsAt(insn: cs.Insn, offset: usize, size: usize) isize {
     return 0;
 }
 
-fn findDisplacement(insn: cs.Insn) ?Displacement {
+fn findDisplacement(insn: *const cs.Insn) ?Displacement {
     @setRuntimeSafety(false);
 
     const detail = insn.detail orelse return null;
@@ -99,7 +99,7 @@ fn findDisplacement(insn: cs.Insn) ?Displacement {
     return null;
 }
 
-fn isRipRelativeInstruction(insn: cs.Insn, ins_type: InstructionType) bool {
+fn isRipRelativeInstruction(insn: *const cs.Insn, ins_type: InstructionType) bool {
     if (ins_type == .RET) {
         return false;
     }
@@ -167,11 +167,11 @@ pub const DisasmResult = struct {
 
         for (disass, 0..) |insn, index| {
             const detail = insn.detail orelse continue;
-            const ins_type = detectInstructionType(insn.id, detail.*);
-            if (!isRipRelativeInstruction(insn, ins_type)) {
+            const ins_type = detectInstructionType(insn.id, detail);
+            if (!isRipRelativeInstruction(&insn, ins_type)) {
                 continue;
             }
-            const displacement = findDisplacement(insn) orelse continue;
+            const displacement = findDisplacement(&insn) orelse continue;
             const x86 = detail.arch.x86;
 
             const target_address: usize = @intCast(@as(isize, @intCast(insn.address)) + insn.size + displacement.value);
@@ -197,11 +197,11 @@ pub const DisasmResult = struct {
 
         for (disass, 0..) |insn, index| {
             const detail = insn.detail orelse continue;
-            const ins_type = detectInstructionType(insn.id, detail.*);
+            const ins_type = detectInstructionType(insn.id, detail);
             if (ins_type != InstructionType.JMP and ins_type != InstructionType.RET) {
                 continue;
             }
-            const displacement = findDisplacement(insn);
+            const displacement = findDisplacement(&insn);
             const x86 = detail.arch.x86;
 
             const target_address: usize = if (displacement) |d|
@@ -236,9 +236,9 @@ pub const DisasmIterResult = struct {
 
     const RipRelativeInsFilterMapIter = capstone_iter.FilteredMapIterator(Instruction, void, ripRelativeInstruction);
     const RipRelativeInsFilterMapIterManaged = capstone_iter.FilteredMapIteratorManaged(Instruction, void, ripRelativeInstruction);
-    fn ripRelativeInstruction(index: usize, insn: cs.Insn, _: void) ?Instruction {
+    fn ripRelativeInstruction(index: usize, insn: *const cs.Insn, _: void) ?Instruction {
         const detail = insn.detail orelse return null;
-        const ins_type = detectInstructionType(insn.id, detail.*);
+        const ins_type = detectInstructionType(insn.id, detail);
         if (!isRipRelativeInstruction(insn, ins_type)) {
             return null;
         }
@@ -266,9 +266,9 @@ pub const DisasmIterResult = struct {
 
     const ReturnJmpInsFilterMapIter = capstone_iter.FilteredMapIterator(Instruction, void, retJmpInstruction);
     const ReturnJmpInsFilterMapIterManaged = capstone_iter.FilteredMapIteratorManaged(Instruction, void, retJmpInstruction);
-    fn retJmpInstruction(index: usize, insn: cs.Insn, _: void) ?Instruction {
+    fn retJmpInstruction(index: usize, insn: *const cs.Insn, _: void) ?Instruction {
         const detail = insn.detail orelse return null;
-        const ins_type = detectInstructionType(insn.id, detail.*);
+        const ins_type = detectInstructionType(insn.id, detail);
         if (ins_type != InstructionType.JMP and ins_type != InstructionType.RET) {
             return null;
         }
@@ -300,7 +300,7 @@ pub const DisasmIterResult = struct {
 
     const AllInsFilterMapIter = capstone_iter.FilteredMapIterator(Instruction, void, anyInstruction);
     const AllInsFilterMapIterManaged = capstone_iter.FilteredMapIteratorManaged(Instruction, void, anyInstruction);
-    fn anyInstruction(index: usize, insn: cs.Insn, _: void) ?Instruction {
+    fn anyInstruction(index: usize, insn: *const cs.Insn, _: void) ?Instruction {
         const detail = insn.detail orelse return null;
         const displacement = findDisplacement(insn);
         const x86 = detail.arch.x86;
@@ -316,7 +316,7 @@ pub const DisasmIterResult = struct {
             .target_address = target_address,
             .opcode = x86.opcode[0],
             .displacement = findDisplacement(insn),
-            .instruction_type = detectInstructionType(insn.id, detail.*),
+            .instruction_type = detectInstructionType(insn.id, detail),
         };
     }
 

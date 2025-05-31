@@ -3,7 +3,7 @@ const cs = @import("capstone_z");
 pub fn FilteredMapIterator(
     comptime T: type,
     comptime CtxType: type,
-    comptime filtered_map: fn (index: usize, insn: cs.Insn, ctx: CtxType) ?T,
+    comptime filtered_map: fn (index: usize, insn: *const cs.Insn, ctx: CtxType) ?T,
 ) type {
     return struct {
         iter: cs.Iter,
@@ -27,7 +27,7 @@ pub fn FilteredMapIterator(
             while (self.iter.next()) |insn| {
                 const current_index = self.index;
                 self.index += 1;
-                if (filtered_map(current_index, insn.*, self.ctx)) |instruction| {
+                if (filtered_map(current_index, insn, self.ctx)) |instruction| {
                     return instruction;
                 }
             }
@@ -44,7 +44,7 @@ pub fn FilteredMapIterator(
 pub fn FilteredMapIteratorManaged(
     comptime T: type,
     comptime CtxType: type,
-    comptime filtered_map: fn (index: usize, insn: cs.Insn, ctx: CtxType) ?T,
+    comptime filtered_map: fn (index: usize, insn: *const cs.Insn, ctx: CtxType) ?T,
 ) type {
     const Iterator = FilteredMapIterator(T, CtxType, filtered_map);
     return struct {
