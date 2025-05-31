@@ -5,10 +5,10 @@ pub fn find(disasm: Disassembler, target: usize, overwrite_size: usize) !usize {
 
     const target_ptr: [*]u8 = @ptrCast(target);
 
-    const max_instruction_size = 15; // Maximum size of an x86_64 instruction
+    const max_instruction_size = 15; // Maximum size of a x86_64 instruction
     const max_read_size = overwrite_size + max_instruction_size * 2;
 
-    var iter_res = try disasm.disasmIter(target_ptr[0..max_read_size], .{});
+    var iter_res = disasm.disasmIter(target_ptr[0..max_read_size], .{});
 
     var detail: Disassembler.Detail = undefined;
     var ins: Disassembler.Insn = undefined;

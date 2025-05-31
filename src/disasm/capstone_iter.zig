@@ -49,13 +49,13 @@ pub fn FilteredMapIteratorManaged(
     const Iterator = FilteredMapIterator(T, CtxType, filtered_map);
     return struct {
         inner: Iterator,
-        ins: [*]cs.Insn,
+        ins: *cs.Insn,
 
         const IterSelf = @This();
 
         /// **Allocates** using `cs.disasmIterManaged`, for an extra `cs.insn.Insn`.
-        pub fn init(handle: cs.Handle, code: []const u8, address: usize, ctx: CtxType) IterSelf {
-            const ins = cs.malloc(handle);
+        pub fn init(handle: cs.Handle, code: []const u8, address: usize, ctx: CtxType) !IterSelf {
+            const ins = try cs.malloc(handle);
             return IterSelf{
                 .inner = Iterator.init(handle, code, address, @ptrCast(ins), ctx),
                 .ins = ins,

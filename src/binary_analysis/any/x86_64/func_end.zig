@@ -1,12 +1,13 @@
 pub const Disassembler = @import("disasm").x86_64;
+const cs = Disassembler.cs;
 
 pub fn detect(disasm: Disassembler, code: []const u8) ?usize {
     @setRuntimeSafety(false);
 
-    var iter_res = try disasm.disasmIter(code, .{});
+    var iter_res = disasm.disasmIter(code, .{});
 
-    var detail: Disassembler.Detail = undefined;
-    var ins: Disassembler.Insn = undefined;
+    var detail: cs.Detail = undefined;
+    var ins: cs.Insn = undefined;
     ins.detail = &detail;
     var iter = iter_res.retJmpInstructionsIter(&ins);
 

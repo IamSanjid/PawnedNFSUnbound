@@ -294,7 +294,7 @@ pub const DisasmIterResult = struct {
     pub fn retJmpInstructionsIter(self: ResSelf, ins: *cs.Insn) ReturnJmpInsFilterMapIter {
         return ReturnJmpInsFilterMapIter.init(self.handle, self.code, self.address, ins, {});
     }
-    pub fn retJmpInstructionsIterManaged(self: ResSelf) ReturnJmpInsFilterMapIterManaged {
+    pub fn retJmpInstructionsIterManaged(self: ResSelf) !ReturnJmpInsFilterMapIterManaged {
         return ReturnJmpInsFilterMapIterManaged.init(self.handle, self.code, self.address, {});
     }
 
@@ -435,7 +435,7 @@ test "mixed non-relative, relative and ret, jump instructions iter" {
     var x86_disasm = try create(.{});
     defer x86_disasm.deinit();
 
-    var disasm_result = try x86_disasm.disasmIter(code, .{});
+    var disasm_result = x86_disasm.disasmIter(code, .{});
 
     var tmp_detail: cs.Detail = undefined;
     var tmp_ins: cs.Insn = undefined;
@@ -457,7 +457,7 @@ test "mixed non-relative, relative and ret, jump instructions iter" {
     // je rip + 0x2
     try std.testing.expectEqual(base + 23 + 2 + 6 + 2, instructions.next().?.target_address);
 
-    var instructions2 = disasm_result.retJmpInstructionsIterManaged();
+    var instructions2 = try disasm_result.retJmpInstructionsIterManaged();
     // jmp -0x55
     try std.testing.expectEqual(base + 7 + 5 - 0x55, instructions2.next().?.target_address);
     // jmp [rip + 0xf3]
@@ -509,8 +509,8 @@ test "re-disasm while iterating" {
     var x86_disasm = try create(.{});
     defer x86_disasm.deinit();
 
-    var disasm_result1 = try x86_disasm.disasmIter(code, .{});
-    var disasm_result2 = try x86_disasm.disasmIter(code, .{});
+    var disasm_result1 = x86_disasm.disasmIter(code, .{});
+    var disasm_result2 = x86_disasm.disasmIter(code, .{});
 
     var tmp_detail: cs.Detail = undefined;
     var tmp_ins: cs.Insn = undefined;

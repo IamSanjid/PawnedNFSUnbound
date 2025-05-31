@@ -88,7 +88,6 @@ pub fn build(b: *std.Build) !void {
         },
     });
     const optimize = b.standardOptimizeOption(.{});
-    var detour_optimize = optimize;
 
     if (!use_prebuilt_detour and target.result.abi != .msvc and !target.result.isMinGW()) {
         return error.OnlyMSVC_GNU;
@@ -96,11 +95,6 @@ pub fn build(b: *std.Build) !void {
 
     if (use_prebuilt_detour and target.result.abi != .msvc) {
         return error.OnlyMSVC;
-    }
-
-    if (optimize == .Debug and target.result.abi != .msvc and !use_prebuilt_detour) {
-        std.log.warn("TODO: Fix issues with `undefined symbol: __declspec(dllimport) _CrtDbgReport` for windows-gnu ABI debug builds\n", .{});
-        detour_optimize = .ReleaseFast; // TODO: Fix the undefined symbol issue for windows-gnu ABI debug builds
     }
 
     if (target.result.cpu.arch != .x86_64) {
@@ -147,7 +141,7 @@ pub fn build(b: *std.Build) !void {
 
     // linking Detours...
     if (!use_prebuilt_detour) {
-        const detours = try addStaticDetours(b, target, detour_optimize);
+        const detours = try addStaticDetours(b, target, optimize);
 
         pawned.linkLibrary(detours);
         pawned.addIncludePath(b.path("Detours"));
