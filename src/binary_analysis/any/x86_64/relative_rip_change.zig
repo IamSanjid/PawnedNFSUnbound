@@ -261,6 +261,7 @@ fn fixCallJmpIns(ins: *const cs.Insn, comptime call: bool, writer: *FixedCodeWri
     }
 
     if (accessing_memory) {
+        // TODO: Change this to mov rax, imm64 variant....
         _ = writer
             .replacing(ins)
             .append(&.{
@@ -353,6 +354,46 @@ pub fn fixMovIns(ins: *const cs.Insn, writer: *FixedCodeWriter) void {
         _ = writer
             .replacing(ins)
             .append(&bytes);
+    } else {
+        // TODO: Optimize it... Doesn't support avx/simd floating point movs...
+        const disp_offset = x86.encoding.disp_offset;
+        const disp_size = x86.encoding.disp_size;
+        std.debug.assert(disp_offset > 0);
+        const start = ins.bytes[0..disp_offset];
+        const end = ins.bytes[disp_offset + disp_size ..];
+        var bytes: [18]u8 = .{
+            0x50, // push rax
+            0x48, 0xB8, // mov rax, {}
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Placeholder for the address
+            0x48, 0x8B, 0x00, // mov rax, [rax]
+            0x48, 0x89, 0x05, // mov [rip+{reuse0}], rax
+        };
+        @as(*usize, @ptrFromInt(@intFromPtr(bytes[3..].ptr))).* = target_address;
+        var ending_bytes: [11]u8 = .{
+            0x51, // push rcx
+            0x48, 0xB9, // mov rcx, {}
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Placeholder for the address
+            0x48, 0x89, 0x01, // mov [rcx], rax
+            0x59, // pop rcx
+            0x58, // pop rax
+        };
+        @as(*usize, @ptrFromInt(@intFromPtr(ending_bytes[3..].ptr))).* = target_address;
+        _ = writer
+            .replacing(ins)
+            .append(bytes)
+            .addReuseRef(0)
+            .append(&.{
+                0x58, // pop rax
+            })
+            .append(start)
+            .addReuseRef(0)
+            .append(end)
+            .append(&.{
+                0x50, // push rax
+                0x48, 0x8B, 0x05, // mov rax, [rip + {}]
+            })
+            .addReuseRef(0)
+            .append(ending_bytes);
     }
 }
 
@@ -593,5 +634,34 @@ test "lea" {
         const full_addr = @as(*usize, @ptrFromInt(@intFromPtr(res.fixed_code[read_offset..].ptr))).*;
         read_offset += @sizeOf(usize);
         try std.testing.expectEqual(base + 14 + 0xfb, full_addr);
+    }
+}
+
+test "mov rax,[rip+rel32]" {
+    @setRuntimeSafety(false);
+    const code: []const u8 = &.{
+        0x48, 0x8b, 0x05, 0xfb, 0x00, 0x00, 0x00, // mov rax, [rip+0xfb] ; mov rel32
+    };
+    const base = @intFromPtr(code.ptr);
+
+    var disasm = try Disassembler.create(.{});
+    defer disasm.deinit();
+
+    const res = try fix(std.testing.allocator, disasm, code, 0);
+    defer std.testing.allocator.free(res.fixed_code);
+
+    var read_offset: usize = 0;
+
+    // Test mov rax, [rip+rel32]
+    {
+        try std.testing.expectEqualSlices(u8, &[_]u8{0x50}, res.fixed_code[read_offset .. read_offset + 1]);
+        read_offset += 1;
+
+        try std.testing.expectEqualSlices(u8, &[_]u8{ 0x48, 0xb8 }, res.fixed_code[read_offset .. read_offset + 2]);
+        read_offset += 2;
+
+        const full_addr = @as(*usize, @ptrFromInt(@intFromPtr(res.fixed_code[read_offset..].ptr))).*;
+        read_offset += @sizeOf(usize);
+        try std.testing.expectEqual(base + 7 + 0xfb, full_addr);
     }
 }
