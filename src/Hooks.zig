@@ -147,7 +147,7 @@ fn hookAbsolute(on_module: []const u8, hook_name: []const u8, to_detour: usize, 
 
         WinConsole.println("Safe Size: {any}", .{overwrite_bytes});
 
-        const fixed = ba.any.x86_64.relative_rip_change.fix(
+        const fixed = ba.any.x86_64.relative_rip_instructions.fix(
             g_allocator,
             disasm_iter_res,
             14,
