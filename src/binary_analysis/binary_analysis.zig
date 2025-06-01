@@ -30,7 +30,7 @@ test "x86_64" {
 
 test {
     if (builtin.cpu.arch == .x86_64) {
-        _ = @import("any/x86_64/relative_rip_change.zig");
+        _ = @import("any/x86_64/relative_rip_instructions.zig");
         _ = @import("any/x86_64/func_end.zig");
         _ = @import("any/x86_64/safe_overwrite_boundary.zig");
     }
