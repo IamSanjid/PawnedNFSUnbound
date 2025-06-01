@@ -197,7 +197,7 @@ fn hookAbsolute(on_module: []const u8, hook_name: []const u8, to_detour: usize, 
 }
 
 pub fn init() !void {
-    disasmbler = try @TypeOf(disasmbler).create(.{});
+    disasmbler = try ba.disasm.x86_64.create(.{});
 
     // Auto-Generated!!!
     _ = try hookAbsolute("ptest.exe", "DoSomething", @intFromPtr(&(@import("hooks/DoSomething.zig").hookFn)), 14);
