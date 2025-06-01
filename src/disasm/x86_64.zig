@@ -4,9 +4,7 @@ const capstone_iter = @import("capstone_iter.zig");
 
 pub const CreateOptions = struct {};
 
-pub const DisasmOptions = struct {
-    use_dummy_address: bool = false,
-};
+pub const DisasmOptions = struct {};
 
 pub const InstructionType = enum {
     JMP,
@@ -33,7 +31,7 @@ pub const Instruction = struct {
     instruction_type: InstructionType,
 };
 
-fn detectInstructionType(id: c_uint, detail: *const cs.Detail) InstructionType {
+pub fn detectInstructionType(id: c_uint, detail: *const cs.Detail) InstructionType {
     for (0..detail.groups_count) |i| {
         const group = detail.groups[i];
         switch (group) {
@@ -75,7 +73,7 @@ fn readIntFromInsAt(insn: *const cs.Insn, offset: usize, size: usize) isize {
     return 0;
 }
 
-fn findDisplacement(insn: *const cs.Insn) ?Displacement {
+pub fn findDisplacement(insn: *const cs.Insn) ?Displacement {
     @setRuntimeSafety(false);
 
     const detail = insn.detail orelse return null;
@@ -99,12 +97,12 @@ fn findDisplacement(insn: *const cs.Insn) ?Displacement {
     return null;
 }
 
-fn isRipRelativeInstruction(insn: *const cs.Insn, ins_type: InstructionType) bool {
+pub fn isRipRelativeInstruction(insn: *const cs.Insn, ins_type: InstructionType) bool {
     if (ins_type == .RET) {
         return false;
     }
 
-    if (ins_type != .OTHERS) {
+    if (ins_type == .JMP or ins_type == .JMP_COND or ins_type == .CALL) {
         return true;
     }
 
@@ -137,16 +135,16 @@ pub fn create(options: CreateOptions) !Self {
     };
 }
 
-pub fn diasm(self: Self, code: []const u8, options: DisasmOptions) !DisasmResult {
-    const address: usize = if (options.use_dummy_address) 0x1000 else @intFromPtr(code.ptr);
+pub fn diasm(self: Self, code: []const u8, _: DisasmOptions) !DisasmResult {
+    const address: usize = @intFromPtr(code.ptr);
     const insns = try cs.disasm(self.handle, code, address, 0);
     return .{ .insns = insns };
 }
 
 /// Creates an iterator for disassembling instructions from the given code slice.
 /// The iterator result ownes the resources and should be deinitialized after use.
-pub fn disasmIter(self: Self, code: []const u8, options: DisasmOptions) DisasmIterResult {
-    const address: usize = if (options.use_dummy_address) 0x1000 else @intFromPtr(code.ptr);
+pub fn disasmIter(self: Self, code: []const u8, _: DisasmOptions) DisasmIterResult {
+    const address: usize = @intFromPtr(code.ptr);
     return .{
         .handle = self.handle,
         .code = code,
@@ -327,7 +325,7 @@ pub const DisasmIterResult = struct {
         return AllInsFilterMapIterManaged.init(self.handle, self.code, self.address, {});
     }
 
-    pub fn csIter(self: ResSelf, ins: *cs.Insn) cs.Iter {
+    pub fn csIter(self: ResSelf, ins: *cs.Insn) cs.IterUnmanaged {
         return cs.disasmIter(self.handle, self.code, self.address, @ptrCast(ins));
     }
     pub fn csIterManaged(self: ResSelf) cs.IterManaged {

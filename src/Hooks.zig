@@ -33,6 +33,7 @@ const AbsoluteHookInfo = struct {
 
 var detour_hooks = std.StringArrayHashMap(*DetourHookInfo).init(g_allocator);
 var absolute_hooks = std.StringArrayHashMap(*AbsoluteHookInfo).init(g_allocator);
+var disasmbler: ba.disasm.x86_64 = undefined;
 
 fn getAddressForHook(module_name: []const u8, hook_name: []const u8) ?usize {
     const module_name_w = std.unicode.utf8ToUtf16LeAllocZ(g_allocator, module_name) catch return null;
@@ -137,28 +138,29 @@ fn hookAbsolute(on_module: []const u8, hook_name: []const u8, to_detour: usize, 
 
     const hook_addr = getAddressForHook(on_module, hook_name) orelse return Errors.HookAddressNotFound;
     const hook_info = absolute_hooks.get(hook_name) orelse {
-        const original_code: [*]u8 = @alignCast(@as([*]u8, @ptrFromInt(hook_addr)));
-        const overwrite_bytes = @import("binary_analysis/safe_overwrite_boundary.zig").find(original_code, 14) orelse {
+        const found_region = ba.any.x86_64.safe_overwrite_boundary.find(disasmbler, hook_addr, 14) orelse {
             WinConsole.eprintln("Failed to find safe overwrite boundary for hook: {s}", .{hook_name});
             return Errors.HookFailed;
         };
+        const overwrite_bytes = found_region.safe_size;
+        const disasm_iter_res = found_region.disasm_iter_res;
 
         WinConsole.println("Safe Size: {any}", .{overwrite_bytes});
 
-        const fixed_code = @import("binary_analysis/relative_rip_change.zig").fix(
+        const fixed = ba.any.x86_64.relative_rip_change.fix(
             g_allocator,
-            original_code[0..overwrite_bytes],
+            disasm_iter_res,
             14,
         ) catch |err| {
             WinConsole.eprintln("Failed to fix relative rip changes code for hook: {s}, error: {}", .{ hook_name, err });
             return err;
         };
-        defer if (fixed_code) |fc| fc.deinit();
+        defer g_allocator.free(fixed.code);
 
-        const code = if (fixed_code) |fc| fc.code.items else original_code[0..overwrite_bytes];
-        const jmp_back_write_offset = if (fixed_code) |fc| fc.reserved_offset else overwrite_bytes;
+        const code = fixed.code;
+        const jmp_back_write_offset = fixed.reserved_offset;
 
-        const ret_trampoline = ba.windows.trampoline.alloc(g_allocator, code.len) catch |err| {
+        const ret_trampoline = ba.windows.trampoline.alloc(code.len) catch |err| {
             WinConsole.eprintln("Failed to allocate trampoline for hook: {s}, error: {}", .{ hook_name, err });
             return err;
         };
@@ -166,9 +168,9 @@ fn hookAbsolute(on_module: []const u8, hook_name: []const u8, to_detour: usize, 
         @memcpy(ret_trampoline, code);
 
         // check if original code is ending with jmp or ret instruction
-        const ending_ins = @import("binary_analysis/func_end.zig").detect(original_code[0..overwrite_bytes]);
+        const ending_ins = ba.any.x86_64.func_end.detect(disasm_iter_res);
         // overwrite the target instructions with jmp to trampoline
-        const jmp_back_original = try ba.windows.trampoline.emitAbsoluteJmp(hook_addr, to_detour, overwrite_bytes);
+        const jmp_back_original = try ba.windows.x86_64.trampoline.emitAbsoluteJmp(hook_addr, to_detour, overwrite_bytes);
         if (ending_ins) |end_ins| {
             WinConsole.println("Ending pos: {}", .{end_ins});
         } else {
@@ -195,6 +197,8 @@ fn hookAbsolute(on_module: []const u8, hook_name: []const u8, to_detour: usize, 
 }
 
 pub fn init() !void {
+    disasmbler = try @TypeOf(disasmbler).create(.{});
+
     // Auto-Generated!!!
     _ = try hookAbsolute("ptest.exe", "DoSomething", @intFromPtr(&(@import("hooks/DoSomething.zig").hookFn)), 14);
     //_ = try hook("ptest.exe", "DoSomething", @intFromPtr(&(@import("hooks/DoSomething.zig").hookFn)));
@@ -226,4 +230,5 @@ pub fn deinit() void {
         g_allocator.destroy(hook_info);
     }
     absolute_hooks.clearRetainingCapacity();
+    disasmbler.deinit();
 }

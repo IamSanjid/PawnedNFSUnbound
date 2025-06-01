@@ -6,7 +6,7 @@ pub fn FilteredMapIterator(
     comptime filtered_map: fn (index: usize, insn: *const cs.Insn, ctx: CtxType) ?T,
 ) type {
     return struct {
-        iter: cs.Iter,
+        iter: cs.IterUnmanaged,
         ctx: CtxType,
         index: usize = 0,
 

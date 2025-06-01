@@ -126,6 +126,7 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
     binary_analysis.addImport("disasm", disasm);
+    binary_analysis.addImport("windows_extra", windows_extra);
 
     const pawned = b.addSharedLibrary(.{
         .name = "PawnedNFSUnbound",
@@ -133,7 +134,6 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
-
     pawned.root_module.addImport("windows_extra", windows_extra);
     pawned.root_module.addImport("binary_analysis", binary_analysis);
     pawned.subsystem = .Console;

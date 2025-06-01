@@ -1,19 +1,17 @@
 pub const Disassembler = @import("disasm").x86_64;
 const cs = Disassembler.cs;
 
-pub fn detect(disasm: Disassembler, code: []const u8) ?usize {
+pub fn detect(disasm_iter_res: Disassembler.DisasmIterResult) ?usize {
     @setRuntimeSafety(false);
-
-    var iter_res = disasm.disasmIter(code, .{});
 
     var detail: cs.Detail = undefined;
     var ins: cs.Insn = undefined;
     ins.detail = &detail;
-    var iter = iter_res.retJmpInstructionsIter(&ins);
+    var iter = disasm_iter_res.retJmpInstructionsIter(&ins);
 
     var last_ins_offset: ?usize = null;
     while (iter.next()) |instruction| {
-        last_ins_offset = instruction.address - @intFromPtr(code.ptr);
+        last_ins_offset = instruction.address - @intFromPtr(disasm_iter_res.code.ptr);
     }
 
     return last_ins_offset;
@@ -35,6 +33,7 @@ test "detect" {
         0x5d, // pop rbp
         0xc3, // ret
     };
-    const result = detect(disasm, code);
+    const disasm_iter_res = disasm.disasmIter(code, .{});
+    const result = detect(disasm_iter_res);
     try std.testing.expectEqual(@as(?usize, code.len - 1), result);
 }
