@@ -14,28 +14,31 @@ const Hooks = @import("Hooks.zig");
 
 const g_allocator = std.heap.c_allocator;
 
-fn mainThread(module: windows.HMODULE) !void {
-    const reader = WinConsole.stdinReader() orelse return;
-    WinConsole.println("DllModule: {}\n", .{module});
-
-    while (true) {
-        const str = (try reader.readUntilDelimiterOrEofAlloc(g_allocator, '\n', 4096)) orelse return;
-        WinConsole.println("ECHO: {s}", .{str});
-    }
-    // const reader = std.io.getStdIn().reader();
-    // const writer = std.io.getStdOut().writer();
-    // try writer.print("DllModule: {}\n", .{module});
-
-    // while (true) {
-    //     const str = (try reader.readUntilDelimiterOrEofAlloc(g_allocator, '\n', 4096)) orelse return;
-    //     try writer.print("ECHO: {s}\n", .{str});
-    // }
-
-    // TODO: Implement GUI?
+export fn onUserInput(input: [*:0]const u8) callconv(.winapi) void {
+    WinConsole.println("User Input: {s}", .{input});
 }
 
-pub fn DllMain(hinst: windows.HINSTANCE, dw_reason: windows.DWORD, reserved: windows.LPVOID) callconv(.winapi) windows.BOOL {
-    _ = reserved;
+// fn mainThread(module: windows.HMODULE) !void {
+//     const reader = WinConsole.stdinReader() orelse return;
+//     WinConsole.println("DllModule: {}\n", .{module});
+
+//     while (true) {
+//         const str = (try reader.readUntilDelimiterOrEofAlloc(g_allocator, '\n', 4096)) orelse return;
+//         WinConsole.println("ECHO: {s}", .{str});
+//     }
+//     // const reader = std.io.getStdIn().reader();
+//     // const writer = std.io.getStdOut().writer();
+//     // try writer.print("DllModule: {}\n", .{module});
+
+//     // while (true) {
+//     //     const str = (try reader.readUntilDelimiterOrEofAlloc(g_allocator, '\n', 4096)) orelse return;
+//     //     try writer.print("ECHO: {s}\n", .{str});
+//     // }
+
+//     // TODO: Implement GUI?
+// }
+
+pub fn DllMain(hinst: windows.HINSTANCE, dw_reason: windows.DWORD, _: windows.LPVOID) callconv(.winapi) windows.BOOL {
     const hmodule: windows.HMODULE = @ptrCast(hinst);
 
     if (c.DetourIsHelperProcess() != 0) {
@@ -45,20 +48,20 @@ pub fn DllMain(hinst: windows.HINSTANCE, dw_reason: windows.DWORD, reserved: win
     switch (dw_reason) {
         windows_extra.DLL_PROCESS_ATTACH => {
             //if (builtin.mode == .Debug) {
-            WinConsole.init() catch |err| {
-                if (err == WinConsole.Errors.FailedToAllocateConsole) {
-                    std.debug.print("Failed to allocate console: {}\n", .{windows.GetLastError()});
-                } else {
-                    std.debug.print("Failed to initialize console: {}\n", .{err});
-                }
-            };
+            // WinConsole.init() catch |err| {
+            //     if (err == WinConsole.Errors.FailedToAllocateConsole) {
+            //         std.debug.print("Failed to allocate console: {}\n", .{windows.GetLastError()});
+            //     } else {
+            //         std.debug.print("Failed to initialize console: {}\n", .{err});
+            //     }
+            // };
             //}
 
-            const th = std.Thread.spawn(.{}, mainThread, .{hmodule}) catch |err| {
-                std.debug.print("Failed to spawn thread: {}\n", .{err});
-                return windows.FALSE;
-            };
-            th.detach();
+            // const th = std.Thread.spawn(.{}, mainThread, .{hmodule}) catch |err| {
+            //     std.debug.print("Failed to spawn thread: {}\n", .{err});
+            //     return windows.FALSE;
+            // };
+            // th.detach();
 
             _ = c.DetourRestoreAfterWith();
             _ = windows_extra.DisableThreadLibraryCalls(hmodule);
@@ -69,8 +72,6 @@ pub fn DllMain(hinst: windows.HINSTANCE, dw_reason: windows.DWORD, reserved: win
             };
             _ = c.DetourTransactionCommit();
         },
-        windows_extra.DLL_THREAD_ATTACH => {},
-        windows_extra.DLL_THREAD_DETACH => {},
         windows_extra.DLL_PROCESS_DETACH => {
             _ = c.DetourTransactionBegin();
             _ = c.DetourUpdateThread(windows.GetCurrentThread());
@@ -78,7 +79,7 @@ pub fn DllMain(hinst: windows.HINSTANCE, dw_reason: windows.DWORD, reserved: win
             _ = c.DetourTransactionCommit();
 
             //if (builtin.mode == .Debug) {
-            WinConsole.deinit();
+            // WinConsole.deinit();
             //}
             //_ = windows_extra.FreeLibraryAndExitThread(hmodule, 0);
         },

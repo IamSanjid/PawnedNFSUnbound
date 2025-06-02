@@ -236,7 +236,7 @@ pub fn hookFn() callconv(.naked) noreturn {
         \\ callq %[onHook:P]
         :
         : [onHook] "X" (&onHook),
-        : "rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "memory"
+        : "memory"
     );
 
     // restoring state...
@@ -342,7 +342,44 @@ pub fn hookFn() callconv(.naked) noreturn {
 
 pub const name = "${HOOK_NAME}";
 
-fn onHook() void {
+fn onHook() callconv(.c) void {
     // heck, we can even change register values directly from here!
-    std.debug.print("On `${HOOK_NAME}` custom hook!\n", .{});
+    std.debug.print(
+        \\On `${HOOK_NAME}` custom hook!
+        \\RAX: 0x{x}
+        \\RBX: 0x{x}
+        \\RCX: 0x{x}
+        \\RDX: 0x{x}
+        \\RSI: 0x{x}
+        \\RDI: 0x{x}
+        \\RBP: 0x{x}
+        \\RSP: 0x{x}
+        \\R8: 0x{x}
+        \\R9: 0x{x}
+        \\R10: 0x{x}
+        \\R11: 0x{x}
+        \\R12: 0x{x}
+        \\R13: 0x{x}
+        \\R14: 0x{x}
+        \\R15: 0x{x}
+    ,
+        .{
+            rax.*,
+            rbx.*,
+            rcx.*,
+            rdx.*,
+            rsi.*,
+            rdi.*,
+            rbp.*,
+            rsp.*,
+            r8.*,
+            r9.*,
+            r10.*,
+            r11.*,
+            r12.*,
+            r13.*,
+            r14.*,
+            r15.*,
+        },
+    );
 }

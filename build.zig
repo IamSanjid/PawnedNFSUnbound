@@ -45,6 +45,9 @@ fn addStaticDetours(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
     lib.linkLibC();
     if (target.result.abi != .msvc) {
         lib.linkLibCpp();
+        if (optimize == .Debug) {
+            lib.linkSystemLibrary("ucrtbased");
+        }
     }
 
     return lib;
@@ -154,6 +157,26 @@ pub fn build(b: *std.Build) !void {
 
     b.installArtifact(pawned);
 
+    // loader dll...
+    const load_cmd = b.step("loader", "Only builds and installs the loader dll.");
+    const loader = b.addSharedLibrary(.{
+        .name = "PawnedNFSUnboundLoader",
+        .root_source_file = b.path("src/loader_dllmain.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    loader.root_module.addImport("windows_extra", windows_extra);
+    loader.subsystem = .Console;
+    loader.linkLibC();
+    // loader.addWin32ResourceFile(.{ .file = b.path("res/resource.rc") });
+    load_cmd.dependOn(&b.addInstallArtifact(loader, .{}).step);
+
+    // build all
+    const all = b.step("all", "Builds and installs the loader and the main dll.");
+    all.dependOn(&b.addInstallArtifact(pawned, .{}).step);
+    all.dependOn(&b.addInstallArtifact(loader, .{}).step);
+
+    // tests...
     const test_cmd = b.step("test", "Runs the available unit tests.");
     test_cmd.dependOn(&b.addRunArtifact(b.addTest(.{
         .root_module = binary_analysis,
@@ -162,6 +185,11 @@ pub fn build(b: *std.Build) !void {
     })).step);
     test_cmd.dependOn(&b.addRunArtifact(b.addTest(.{
         .root_module = disasm,
+        .target = target,
+        .optimize = optimize,
+    })).step);
+    test_cmd.dependOn(&b.addRunArtifact(b.addTest(.{
+        .root_source_file = b.path("src/hooks/tests.zig"),
         .target = target,
         .optimize = optimize,
     })).step);

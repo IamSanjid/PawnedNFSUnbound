@@ -29,6 +29,7 @@ const AbsoluteHookInfo = struct {
     address: usize,
     detour: usize,
     trampoline: []u8,
+    original_code_offset: usize,
 };
 
 var detour_hooks = std.StringArrayHashMap(*DetourHookInfo).init(g_allocator);
@@ -143,9 +144,8 @@ fn hookAbsolute(on_module: []const u8, hook_name: []const u8, to_detour: usize, 
             return Errors.HookFailed;
         };
         const overwrite_bytes = found_region.safe_size;
+        const original_code: []const u8 = @as([*]const u8, @ptrFromInt(hook_addr))[0..overwrite_bytes];
         const disasm_iter_res = found_region.disasm_iter_res;
-
-        WinConsole.println("Safe Size: {any}", .{overwrite_bytes});
 
         const fixed = ba.any.x86_64.relative_rip_instructions.fix(
             g_allocator,
@@ -160,12 +160,13 @@ fn hookAbsolute(on_module: []const u8, hook_name: []const u8, to_detour: usize, 
         const code = fixed.code;
         const jmp_back_write_offset = fixed.reserved_offset;
 
-        const ret_trampoline = ba.windows.trampoline.alloc(code.len) catch |err| {
+        const ret_trampoline = ba.windows.trampoline.alloc(code.len + original_code.len) catch |err| {
             WinConsole.eprintln("Failed to allocate trampoline for hook: {s}, error: {}", .{ hook_name, err });
             return err;
         };
         // copy the fixed/original code to the trampoline
         @memcpy(ret_trampoline, code);
+        @memcpy(ret_trampoline[code.len..], original_code);
 
         // check if original code is ending with jmp or ret instruction
         const ending_ins = ba.any.x86_64.func_end.detect(disasm_iter_res);
@@ -188,6 +189,7 @@ fn hookAbsolute(on_module: []const u8, hook_name: []const u8, to_detour: usize, 
             .address = hook_addr,
             .detour = to_detour,
             .trampoline = ret_trampoline,
+            .original_code_offset = code.len,
         };
         try absolute_hooks.put(hook_name, new_hook_info);
         return new_hook_info;
@@ -200,14 +202,14 @@ pub fn init() !void {
     disasmbler = try ba.disasm.x86_64.create(.{});
 
     // Auto-Generated!!!
-    _ = try hookAbsolute("ptest.exe", "DoSomething", @intFromPtr(&(@import("hooks/DoSomething.zig").hookFn)), 14);
+    //_ = try hookAbsolute("ptest.exe", "DoSomething", @intFromPtr(&(@import("hooks/DoSomething.zig").hookFn)), 14);
     //_ = try hook("ptest.exe", "DoSomething", @intFromPtr(&(@import("hooks/DoSomething.zig").hookFn)));
 
     // Auto-Generated!!!
     //_ = try hook("ptest.exe", "DoSomething2", @intFromPtr(&(@import("hooks/DoSomething2.zig").hookFn)));
 
     // Auto-Generated!!!
-    //_ = try hook("NeedForSpeedUnbound.exe", "AllRaceAvailable", @intFromPtr(&(@import("hooks/AllRaceAvailable.zig").hookFn)));
+    _ = try hookAbsolute("NeedForSpeedUnbound.exe", "AllRaceAvailable", @intFromPtr(&(@import("hooks/AllRaceAvailable.zig").hookFn)), 0);
 }
 
 pub fn deinit() void {
@@ -225,6 +227,12 @@ pub fn deinit() void {
     while (absolute_hooks_iter.next()) |hk| {
         const hook_info = hk.value_ptr.*;
         if (hook_info.trampoline.len > 0) {
+            if (hook_info.original_code_offset > 0) {
+                const restore_code = hook_info.trampoline[hook_info.original_code_offset..];
+                ba.windows.trampoline.restore(hook_info.address, restore_code) catch |err| {
+                    WinConsole.eprintln("Failed to restore original code for hook: {s}, error: {}", .{ hk.key_ptr.*, err });
+                };
+            }
             ba.windows.trampoline.free(hook_info.trampoline);
         }
         g_allocator.destroy(hook_info);
