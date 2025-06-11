@@ -1,12 +1,10 @@
 const std = @import("std");
-const windows = std.os.windows;
-const windows_extra = @import("windows_extra");
 
-const any = @import("../../any/any.zig");
-const trampoline = @import("../trampoline.zig");
+const any = @import("../any.zig");
+const trampoline = any.trampoline;
 const disasm = @import("disasm");
 
-const emitAbsoluteJmp = @import("trampoline.zig").emitAbsoluteJmp;
+const emitAbsoluteJmp = any.x86_64.trampoline.emitAbsoluteJmp;
 
 pub const absolute_jmp_size = std.mem.alignForward(usize, 14, @sizeOf(usize));
 pub const Errors = error{
@@ -27,8 +25,8 @@ pub const JumpEntry = struct {
     }
 
     fn flush(self: @This()) void {
-        const address_ptr: windows.LPVOID = @ptrFromInt(@intFromPtr(self.detour_jmp.ptr));
-        _ = windows_extra.FlushInstructionCache(windows.GetCurrentProcess(), address_ptr, absolute_jmp_size * 2);
+        const addr: [*]u8 = self.detour_jmp.ptr;
+        any.clearInstructionCache(addr[0 .. absolute_jmp_size * 2]);
     }
 
     fn destroy(self: @This()) void {

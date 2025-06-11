@@ -15,12 +15,8 @@ pub fn imports(comptime arch: std.Target.Cpu.Arch) type {
     };
 }
 
-test "x86_64" {
-    if (builtin.cpu.arch != .x86_64 or builtin.os.tag != .windows) {
-        return;
-    }
-    //const x86_64 = imports(.x86_64);
-    const trampoline = windows.trampoline;
+test "any trampoline" {
+    const trampoline = any.trampoline;
     const target_len = 10;
     const trampoline_region = try trampoline.alloc(target_len);
     defer trampoline.free(trampoline_region);
@@ -34,9 +30,7 @@ test {
         _ = @import("any/x86_64/func_end.zig");
         _ = @import("any/x86_64/safe_overwrite_boundary.zig");
 
-        if (builtin.os.tag == .windows) {
-            _ = @import("windows/x86_64/Detour.zig");
-        }
+        _ = @import("any/x86_64/Detour.zig");
     }
     _ = @import("binary_analysis.zig");
     _ = @import("std").testing.refAllDecls(@This());
