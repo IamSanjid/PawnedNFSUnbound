@@ -4,7 +4,7 @@ const windows = std.os.windows;
 const windows_extra = @import("windows_extra");
 
 pub inline fn alloc(target_len: usize) ![]u8 {
-    const trampoline_len = target_len;
+    const trampoline_len = std.mem.alignForward(usize, target_len, @sizeOf(usize));
     const memory = try windows.VirtualAlloc(
         null,
         trampoline_len,

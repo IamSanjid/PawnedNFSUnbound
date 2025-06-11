@@ -62,6 +62,13 @@ fn getAddressForHook(module_name: []const u8, hook_name: []const u8) ?usize {
     if (std.ascii.eqlIgnoreCase(hook_name, "AllRaceAvailable")) {
         return module_addr + 0x2313424;
     }
+    // Auto-Generated!!!
+    if (std.ascii.eqlIgnoreCase(hook_name, "RaceConfigCopy")) {
+        return module_addr + 0x25A1737;
+    }
+    if (std.ascii.eqlIgnoreCase(hook_name, "RaceConfigCopyReset")) {
+        return module_addr + 0x9066BC4;
+    }
     return null;
 }
 
@@ -133,9 +140,8 @@ fn hook(on_module: []const u8, hook_name: []const u8, to_detour: usize) !*Detour
     return hook_info;
 }
 
-fn hookAbsolute(on_module: []const u8, hook_name: []const u8, to_detour: usize, dep_overwrite_bytes: usize) !*AbsoluteHookInfo {
-    _ = dep_overwrite_bytes;
-    @setRuntimeSafety(false); // alignments probably will not be fine so we just gonna trust ourselves
+fn hookAbsolute(on_module: []const u8, hook_name: []const u8, to_detour: usize) !*AbsoluteHookInfo {
+    @setRuntimeSafety(false);
 
     const hook_addr = getAddressForHook(on_module, hook_name) orelse return Errors.HookAddressNotFound;
     const hook_info = absolute_hooks.get(hook_name) orelse {
@@ -209,7 +215,11 @@ pub fn init() !void {
     //_ = try hook("ptest.exe", "DoSomething2", @intFromPtr(&(@import("hooks/DoSomething2.zig").hookFn)));
 
     // Auto-Generated!!!
-    _ = try hookAbsolute("NeedForSpeedUnbound.exe", "AllRaceAvailable", @intFromPtr(&(@import("hooks/AllRaceAvailable.zig").hookFn)), 0);
+    //_ = try hookAbsolute("NeedForSpeedUnbound.exe", "AllRaceAvailable", @intFromPtr(&(@import("hooks/AllRaceAvailable.zig").hookFn)));
+
+    // Auto-Generated!!!
+    _ = try hookAbsolute("NeedForSpeedUnbound.exe", "RaceConfigCopy", @intFromPtr(&(@import("hooks/RaceConfigCopy.zig").hookFn)));
+    _ = try hookAbsolute("NeedForSpeedUnbound.exe", "RaceConfigCopyReset", @intFromPtr(&(@import("hooks/RaceConfigCopy.zig").hookFn2)));
 }
 
 pub fn deinit() void {

@@ -5,14 +5,13 @@ builder: *std.Build,
 hook_name: ?[]const u8 = null,
 // TODO: These should be part of a config file
 hook_offset: ?usize = null,
-hook_overwrite_bytes: ?usize = null,
 hook_base_module: []const u8,
 
 const Self = @This();
 const src_dir: []const u8 = "src";
 const output_dir: []const u8 = "hooks";
 
-pub fn create(b: *std.Build, name: ?[]const u8, offset: ?usize, overwrite_bytes: ?usize, base_module: []const u8) *Self {
+pub fn create(b: *std.Build, name: ?[]const u8, offset: ?usize, base_module: []const u8) *Self {
     const self = b.allocator.create(Self) catch @panic("OOM");
     self.* = .{
         .step = std.Build.Step.init(.{
@@ -24,7 +23,6 @@ pub fn create(b: *std.Build, name: ?[]const u8, offset: ?usize, overwrite_bytes:
         .builder = b,
         .hook_name = name,
         .hook_offset = offset,
-        .hook_overwrite_bytes = overwrite_bytes,
         .hook_base_module = base_module,
     };
 
@@ -131,22 +129,13 @@ fn modifyHooksInit(self: *Self, allocator: std.mem.Allocator, source_code_z: [:0
 
             const before_insertion = ast.source[0..end];
             const after_insertion = ast.source[end..];
-            const insertion_code = if (self.hook_overwrite_bytes) |len|
-                try std.fmt.allocPrint(
-                    allocator,
-                    \\    // Auto-Generated!!!
-                    \\    _ = try hookAbsolute("{s}", "{s}", @intFromPtr(&(@import("{s}").hookFn)), {});
-                ,
-                    .{ self.hook_base_module, self.hook_name.?, hooks_src_path, len },
-                )
-            else
-                try std.fmt.allocPrint(
-                    allocator,
-                    \\    // Auto-Generated!!!
-                    \\    _ = try hook("{s}", "{s}", @intFromPtr(&(@import("{s}").hookFn)));
-                ,
-                    .{ self.hook_base_module, self.hook_name.?, hooks_src_path },
-                );
+            const insertion_code = try std.fmt.allocPrint(
+                allocator,
+                \\    // Auto-Generated!!!
+                \\    _ = try hookAbsolute("{s}", "{s}", @intFromPtr(&(@import("{s}").hookFn)));
+            ,
+                .{ self.hook_base_module, self.hook_name.?, hooks_src_path },
+            );
             defer allocator.free(insertion_code);
             return try std.fmt.allocPrintZ(allocator, "{s}\n{s}\n{s}", .{ before_insertion, insertion_code, after_insertion });
         }

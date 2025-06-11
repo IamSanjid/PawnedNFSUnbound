@@ -233,7 +233,6 @@ pub const DisasmIterResult = struct {
     const ResSelf = @This();
 
     const RipRelativeInsFilterMapIter = capstone_iter.FilteredMapIterator(Instruction, void, ripRelativeInstruction);
-    const RipRelativeInsFilterMapIterManaged = capstone_iter.FilteredMapIteratorManaged(Instruction, void, ripRelativeInstruction);
     fn ripRelativeInstruction(index: usize, insn: *const cs.Insn, _: void) ?Instruction {
         const detail = insn.detail orelse return null;
         const ins_type = detectInstructionType(insn.id, detail);
@@ -258,12 +257,8 @@ pub const DisasmIterResult = struct {
     pub fn ripRelativeInstructionsIter(self: ResSelf, ins: *cs.Insn) RipRelativeInsFilterMapIter {
         return RipRelativeInsFilterMapIter.init(self.handle, self.code, self.address, ins, {});
     }
-    pub fn ripRelativeInstructionsIterManaged(self: ResSelf) RipRelativeInsFilterMapIterManaged {
-        return RipRelativeInsFilterMapIterManaged.init(self.handle, self.code, self.address, {});
-    }
 
     const ReturnJmpInsFilterMapIter = capstone_iter.FilteredMapIterator(Instruction, void, retJmpInstruction);
-    const ReturnJmpInsFilterMapIterManaged = capstone_iter.FilteredMapIteratorManaged(Instruction, void, retJmpInstruction);
     fn retJmpInstruction(index: usize, insn: *const cs.Insn, _: void) ?Instruction {
         const detail = insn.detail orelse return null;
         const ins_type = detectInstructionType(insn.id, detail);
@@ -292,12 +287,8 @@ pub const DisasmIterResult = struct {
     pub fn retJmpInstructionsIter(self: ResSelf, ins: *cs.Insn) ReturnJmpInsFilterMapIter {
         return ReturnJmpInsFilterMapIter.init(self.handle, self.code, self.address, ins, {});
     }
-    pub fn retJmpInstructionsIterManaged(self: ResSelf) !ReturnJmpInsFilterMapIterManaged {
-        return ReturnJmpInsFilterMapIterManaged.init(self.handle, self.code, self.address, {});
-    }
 
     const AllInsFilterMapIter = capstone_iter.FilteredMapIterator(Instruction, void, anyInstruction);
-    const AllInsFilterMapIterManaged = capstone_iter.FilteredMapIteratorManaged(Instruction, void, anyInstruction);
     fn anyInstruction(index: usize, insn: *const cs.Insn, _: void) ?Instruction {
         const detail = insn.detail orelse return null;
         const displacement = findDisplacement(insn);
@@ -321,15 +312,12 @@ pub const DisasmIterResult = struct {
     pub fn iter(self: ResSelf, ins: *cs.Insn) AllInsFilterMapIter {
         return AllInsFilterMapIter.init(self.handle, self.code, self.address, ins, {});
     }
-    pub fn iterManaged(self: ResSelf) AllInsFilterMapIterManaged {
-        return AllInsFilterMapIterManaged.init(self.handle, self.code, self.address, {});
-    }
 
     pub fn csIter(self: ResSelf, ins: *cs.Insn) cs.IterUnmanaged {
         return cs.disasmIter(self.handle, self.code, self.address, @ptrCast(ins));
     }
-    pub fn csIterManaged(self: ResSelf) cs.IterManaged {
-        return cs.disasmIterManaged(self.handle, self.code, self.address);
+    pub fn csIterManaged(self: ResSelf, allocator: std.mem.Allocator) cs.IterManaged {
+        return cs.disasmIterManaged(allocator, self.handle, self.code, self.address);
     }
 };
 
@@ -455,7 +443,7 @@ test "mixed non-relative, relative and ret, jump instructions iter" {
     // je rip + 0x2
     try std.testing.expectEqual(base + 23 + 2 + 6 + 2, instructions.next().?.target_address);
 
-    var instructions2 = try disasm_result.retJmpInstructionsIterManaged();
+    var instructions2 = disasm_result.retJmpInstructionsIter(&tmp_ins);
     // jmp -0x55
     try std.testing.expectEqual(base + 7 + 5 - 0x55, instructions2.next().?.target_address);
     // jmp [rip + 0xf3]

@@ -10,7 +10,7 @@ const g_allocator = std.heap.c_allocator;
 const OnUserInputFn = fn ([*:0]const u8) callconv(.winapi) void;
 
 const Dll = struct {
-    handle: ?windows.HMODULE = null,
+    handle: ?std.DynLib = null,
     path: []const u8,
 
     fn load(path: []const u8) !Dll {
@@ -20,8 +20,7 @@ const Dll = struct {
             try std.fmt.allocPrint(g_allocator, "{s}.dll", .{path});
         errdefer g_allocator.free(path_copy);
 
-        const dll_path_w = windows.sliceToPrefixedFileW(null, path_copy) catch return error.InvalidPath;
-        const handle = windows.kernel32.LoadLibraryW(dll_path_w.span()) orelse return error.LoadLibraryFailed;
+        const handle = try std.DynLib.open(path_copy);
         return Dll{
             .handle = handle,
             .path = path_copy,
@@ -29,64 +28,53 @@ const Dll = struct {
     }
 
     fn reload(self: *Dll) !void {
-        if (self.handle) |handle| {
-            _ = windows.kernel32.FreeLibrary(handle);
+        if (self.handle) |*handle| {
+            handle.close();
         }
 
-        const dll_path_w = windows.sliceToPrefixedFileW(null, self.path) catch unreachable;
-        self.handle = windows.kernel32.LoadLibraryW(dll_path_w.span()) orelse return error.LoadLibraryFailed;
+        self.handle = try std.DynLib.open(self.path);
     }
 
-    fn getFn(self: Dll, comptime FnType: type, fn_name: [:0]const u8) ?*FnType {
-        if (self.handle) |handle| {
-            const fn_ptr = windows.kernel32.GetProcAddress(handle, fn_name.ptr) orelse return null;
-            return @ptrCast(@alignCast(fn_ptr));
+    fn getFn(self: *Dll, comptime FnType: type, fn_name: [:0]const u8) ?*FnType {
+        if (self.handle) |*handle| {
+            return handle.lookup(*FnType, fn_name) orelse return null;
         }
         return null;
     }
 
-    fn deinit(self: Dll) void {
-        if (self.handle) |handle| {
-            _ = windows.kernel32.FreeLibrary(handle);
+    fn deinit(self: *Dll) void {
+        if (self.handle) |*handle| {
+            handle.close();
         }
+        self.handle = null;
         g_allocator.free(self.path);
     }
 };
 
-var loaded_dlls = std.StringArrayHashMap(Dll).init(g_allocator);
+var loaded_dlls = std.ArrayList(Dll).init(g_allocator);
 
 fn sanitizePath(dll_path: []const u8) []const u8 {
     return std.mem.trim(u8, std.mem.trim(u8, dll_path, "\""), &std.ascii.whitespace);
 }
 
 fn loadDll(path: []const u8) !void {
-    const dll_info = try Dll.load(sanitizePath(path));
-    const dll_name = std.mem.trimEnd(u8, std.fs.path.basename(dll_info.path), ".dll");
-    try loaded_dlls.put(dll_name, dll_info);
+    const dll = try Dll.load(sanitizePath(path));
+    try loaded_dlls.append(dll);
 }
 
-fn reloadDll(path: []const u8) !void {
-    const dll_path = sanitizePath(path);
-    const dll_name = if (std.ascii.endsWithIgnoreCase(dll_path, ".dll"))
-        std.mem.trimEnd(u8, std.fs.path.basename(dll_path), ".dll")
-    else
-        dll_path;
+fn reloadDll(index: usize) !void {
+    if (index >= loaded_dlls.items.len) return error.IndexOutOfBounds;
 
-    const dll_entry = loaded_dlls.getEntry(dll_name) orelse return;
-    const dll_info = dll_entry.value_ptr;
-
-    try dll_info.reload();
+    var dll = loaded_dlls.items[index];
+    try dll.reload();
 }
 
-fn unloadDll(path: []const u8) bool {
-    const dll_path = sanitizePath(path);
-    const dll_name = if (std.ascii.endsWithIgnoreCase(dll_path, ".dll"))
-        std.mem.trimEnd(u8, std.fs.path.basename(dll_path), ".dll")
-    else
-        dll_path;
+fn unloadDll(index: usize) bool {
+    if (index >= loaded_dlls.items.len) return false;
 
-    const dll_entry = loaded_dlls.fetchSwapRemove(dll_name) orelse return false;
-    dll_entry.value.deinit();
+    var dll = loaded_dlls.orderedRemove(index);
+    dll.deinit();
+
     return true;
 }
 
@@ -118,34 +106,40 @@ fn mainThread(module: windows.HMODULE) !void {
             };
         } else if (std.ascii.eqlIgnoreCase(cmd, "reload")) {
             if (splitted.peek() == null) {
-                WinConsole.println("Usage: reload <dll_path/name>", .{});
+                WinConsole.println("Usage: reload <index(use `list` cmd to check)>", .{});
                 continue;
             }
-            const dll_path = full_cmd[cmd.len + 1 ..]; // +1 for space
-            reloadDll(dll_path) catch |e| {
+            const dll_index = full_cmd[cmd.len + 1 ..];
+            const index = std.fmt.parseInt(usize, dll_index, 0) catch {
+                WinConsole.eprintln("Usage: reload <index(use `list` cmd to check)>", .{});
+                continue;
+            };
+            reloadDll(index) catch |e| {
                 WinConsole.eprintln(
-                    "Failed to re-load DLL: {s} for {}, last error: {}",
-                    .{ dll_path, e, windows.GetLastError() },
+                    "Failed to re-load DLL index {} for {}, last error: {}",
+                    .{ index, e, windows.GetLastError() },
                 );
                 continue;
             };
         } else if (std.ascii.eqlIgnoreCase(cmd, "unload")) {
             if (splitted.peek() == null) {
-                WinConsole.println("Usage: load <dll_path/name>", .{});
+                WinConsole.println("Usage: unload <index(use `list` cmd to check)>", .{});
                 continue;
             }
-            const dll_path = full_cmd[cmd.len + 1 ..]; // +1 for space
-            if (unloadDll(dll_path)) WinConsole.println("DLL unloaded: {s}", .{dll_path});
+            const dll_index = full_cmd[cmd.len + 1 ..];
+            const index = std.fmt.parseInt(usize, dll_index, 0) catch {
+                WinConsole.eprintln("Usage: reload <index(use `list` cmd to check)>", .{});
+                continue;
+            };
+            if (unloadDll(index)) WinConsole.println("DLL unloaded index: {}", .{index});
         } else if (std.ascii.eqlIgnoreCase(cmd, "list")) {
-            var iter = loaded_dlls.iterator();
-            while (iter.next()) |entry| {
-                WinConsole.eprintln("Loaded DLL: {s} at {x}", .{ entry.key_ptr.*, entry.value_ptr.handle.? });
+            for (loaded_dlls.items, 0..) |dll, i| {
+                WinConsole.eprintln("Loaded DLL: [{}] {s}", .{ i, dll.path });
             }
         } else {
-            var iter = loaded_dlls.iterator();
-            while (iter.next()) |entry| {
-                const onUserInput = entry.value_ptr.getFn(OnUserInputFn, "onUserInput") orelse {
-                    WinConsole.eprintln("Couldn't find `onUserInput` in {s}", .{entry.value_ptr.path});
+            for (loaded_dlls.items) |*dll| {
+                const onUserInput = dll.getFn(OnUserInputFn, "onUserInput") orelse {
+                    WinConsole.eprintln("Couldn't find `onUserInput` in {s}", .{dll.path});
                     continue;
                 };
                 const str_z = try g_allocator.dupeZ(u8, str);

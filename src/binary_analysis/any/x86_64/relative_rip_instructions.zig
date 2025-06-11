@@ -155,7 +155,7 @@ fn fixCallJmpIns(ins: *const cs.Insn, comptime call: bool, writer: *FixedCodeWri
     @setRuntimeSafety(false);
     const detail = ins.detail orelse unreachable;
     const x86 = detail.arch.x86;
-    const displacement = Disassembler.findDisplacement(ins) orelse unreachable;
+    const displacement = Disassembler.findDisplacement(ins) orelse return; // saves us from call [rax]/jmp [rax]
 
     const target_address: usize = @intCast(@as(isize, @intCast(ins.address)) + ins.size + displacement.value);
 
@@ -843,4 +843,24 @@ test "mixed" {
     });
 
     try std.testing.expectEqualSlices(u8, exptected_bytes.items, res.code[0..exptected_bytes.items.len]);
+}
+
+test "call [rdx]" {
+    const code: []const u8 = &.{
+        0x48, 0x8B, 0x16, 0x48, 0x8B, 0xCE, 0x48, 0x8B, 0xF8, 0xFF, 0x12, 0x48, 0x3B, 0xF8,
+    };
+    //const base = @intFromPtr(code.ptr);
+
+    var disasm = try Disassembler.create(.{});
+    defer disasm.deinit();
+
+    const disasm_iter_res = disasm.disasmIter(code, .{});
+
+    const res = try fix(std.testing.allocator, disasm_iter_res, 14);
+    defer std.testing.allocator.free(res.code);
+
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        0x48, 0x8B, 0x16, 0x48, 0x8B, 0xCE, 0x48, 0x8B, 0xF8, 0xFF, 0x12, 0x48, 0x3B, 0xF8,
+        0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+    }, res.code);
 }

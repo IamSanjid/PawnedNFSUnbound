@@ -40,39 +40,3 @@ pub fn FilteredMapIterator(
         }
     };
 }
-
-pub fn FilteredMapIteratorManaged(
-    comptime T: type,
-    comptime CtxType: type,
-    comptime filtered_map: fn (index: usize, insn: *const cs.Insn, ctx: CtxType) ?T,
-) type {
-    const Iterator = FilteredMapIterator(T, CtxType, filtered_map);
-    return struct {
-        inner: Iterator,
-        ins: *cs.Insn,
-
-        const IterSelf = @This();
-
-        /// **Allocates** using `cs.disasmIterManaged`, for an extra `cs.insn.Insn`.
-        pub fn init(handle: cs.Handle, code: []const u8, address: usize, ctx: CtxType) !IterSelf {
-            const ins = try cs.malloc(handle);
-            return IterSelf{
-                .inner = Iterator.init(handle, code, address, @ptrCast(ins), ctx),
-                .ins = ins,
-            };
-        }
-
-        pub fn next(self: *IterSelf) ?T {
-            return self.inner.next();
-        }
-
-        pub fn reset(self: *IterSelf) void {
-            self.inner.reset();
-            self.index = 0;
-        }
-
-        pub fn deinit(self: IterSelf) void {
-            cs.free(self.ins[0..1]);
-        }
-    };
-}

@@ -546,7 +546,7 @@ fn onHook() callconv(.c) void {
 
 test "offsets" {
     try std.testing.expectEqual(0x18, @offsetOf(EventProgressionAsset, "asset_name"));
-    try std.testing.expectEqual(0x20, @offsetOf(EventProgressionAsset, "possible_start"));
+    try std.testing.expectEqual(0x20, @offsetOf(EventProgressionAsset, "event_unlocks_list_start"));
     try std.testing.expectEqual(0x28, @offsetOf(EventProgressionAsset, "event_unlocks_list"));
 
     try std.testing.expectEqual(0x14, @offsetOf(EventsUnlocksList, "size"));

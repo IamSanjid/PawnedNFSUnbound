@@ -19,7 +19,7 @@ fn addDetourSourceFiles(lib: *std.Build.Step.Compile, detours_src_dir: std.Build
         }
 
         const source_file_path = try detours_src_dir.join(b.allocator, entry.name);
-        const deotour_debug_flag = if (optimize == .Debug) "-DDETOUR_DEBUG=1" else "-DDETOUR_DEBUG=0";
+        const deotour_debug_flag = if (optimize == .Debug) "-DDETOUR_DEBUG=1 -D_DEBUG" else "-DDETOUR_DEBUG=0";
         lib.addCSourceFile(.{
             .file = source_file_path,
             .language = null,
@@ -73,13 +73,11 @@ pub fn build(b: *std.Build) !void {
         }
         break :blk null;
     };
-    const hook_overwrite_bytes_option = b.option(usize, "hook-overwrite-bytes", "The number of bytes to overwrite at the hook address");
     const hook_base_module = b.option([]const u8, "hook-base-module", "The base module eg. `something.exe`") orelse "NeedForSpeedUnbound.exe";
     var generate_hook = @import("build/GenerateHook.zig").create(
         b,
         hook_name_option,
         hook_offset_option,
-        hook_overwrite_bytes_option,
         hook_base_module,
     );
     hook_cmd.dependOn(&generate_hook.step);
