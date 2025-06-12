@@ -2,7 +2,9 @@ const std = @import("std");
 pub const cs = @import("capstone_z");
 const capstone_iter = @import("capstone_iter.zig");
 
-pub const CreateOptions = struct {};
+pub const CreateOptions = struct {
+    is_32_bit: bool = false,
+};
 
 pub const DisasmOptions = struct {};
 
@@ -111,7 +113,9 @@ pub fn isRipRelativeInstruction(insn: *const cs.Insn, ins_type: InstructionType)
 
     for (0..x86.op_count) |i| {
         const op = x86.operands[i];
-        if (op.type == .MEM and op.inst.mem.base == .RIP) {
+        if (op.type == .MEM and
+            (op.inst.mem.base == .RIP or op.inst.mem.base == .EIP))
+        {
             return true;
         }
     }
@@ -124,8 +128,10 @@ handle: cs.Handle,
 const Self = @This();
 
 pub fn create(options: CreateOptions) !Self {
-    _ = options;
-    var handle = try cs.open(cs.Arch.X86, cs.Mode.@"64");
+    var handle = if (options.is_32_bit)
+        try cs.open(cs.Arch.X86, cs.Mode.from(.@"32"))
+    else
+        try cs.open(cs.Arch.X86, cs.Mode.from(.@"64"));
     errdefer cs.close(&handle) catch {};
 
     try cs.option(handle, .DETAIL, cs.c.CS_OPT_ON);

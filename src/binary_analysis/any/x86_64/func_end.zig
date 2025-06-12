@@ -1,17 +1,22 @@
-pub const Disassembler = @import("disasm").x86_64;
-const cs = Disassembler.cs;
+const x86 = @import("disasm").x86;
+const cs = @import("disasm").capstone;
 
-pub fn detect(disasm_iter_res: Disassembler.DisasmIterResult) ?usize {
+pub fn detect(handle: cs.Handle, code: []const u8) ?usize {
     @setRuntimeSafety(false);
+    const target_address = @intFromPtr(code.ptr);
 
     var detail: cs.Detail = undefined;
     var ins: cs.Insn = undefined;
     ins.detail = &detail;
-    var iter = disasm_iter_res.retJmpInstructionsIter(&ins);
+    var iter = cs.disasmIter(handle, code, target_address, &ins);
 
     var last_ins_offset: ?usize = null;
     while (iter.next()) |instruction| {
-        last_ins_offset = instruction.address - @intFromPtr(disasm_iter_res.code.ptr);
+        const ins_detail = instruction.detail orelse continue;
+        const ins_type = x86.detectInstructionType(instruction.id, ins_detail);
+        if (ins_type == .JMP or ins_type == .RET) {
+            last_ins_offset = instruction.address - target_address;
+        }
     }
 
     return last_ins_offset;
@@ -20,7 +25,7 @@ pub fn detect(disasm_iter_res: Disassembler.DisasmIterResult) ?usize {
 test "detect" {
     const std = @import("std");
 
-    var disasm = try Disassembler.create(.{});
+    var disasm = try x86.create(.{});
     defer disasm.deinit();
 
     const code: []const u8 = &.{
@@ -33,7 +38,6 @@ test "detect" {
         0x5d, // pop rbp
         0xc3, // ret
     };
-    const disasm_iter_res = disasm.disasmIter(code, .{});
-    const result = detect(disasm_iter_res);
+    const result = detect(disasm.handle, code);
     try std.testing.expectEqual(@as(?usize, code.len - 1), result);
 }

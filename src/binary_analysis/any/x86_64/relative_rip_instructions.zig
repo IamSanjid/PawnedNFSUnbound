@@ -1,7 +1,7 @@
 const std = @import("std");
 
-const Disassembler = @import("disasm").x86_64;
-const cs = Disassembler.cs;
+const Disassembler = @import("disasm").x86;
+const cs = @import("disasm").capstone;
 
 pub const FixedCode = struct {
     code: []const u8,
@@ -23,9 +23,9 @@ const FixedCodeWriter = struct {
     reuse_refs: std.ArrayList(usize),
     current_offset: usize = 0,
 
-    const FCWSelf = @This();
+    const Self = @This();
 
-    fn init(allocator: std.mem.Allocator, code: []const u8, reserve: usize) !FCWSelf {
+    fn init(allocator: std.mem.Allocator, code: []const u8, reserve: usize) !Self {
         var new_buf = std.ArrayList(u8).init(allocator);
         try new_buf.appendNTimes(0x90, reserve);
         return .{
@@ -37,15 +37,15 @@ const FixedCodeWriter = struct {
         };
     }
 
-    fn remainingSize(self: FCWSelf) usize {
+    fn remainingSize(self: Self) usize {
         return self.code[self.current_offset..].len;
     }
 
-    fn size(self: FCWSelf) usize {
+    fn size(self: Self) usize {
         return self.buf.items.len + self.new_buf.items.len;
     }
 
-    fn replacing(self: *FCWSelf, ins: *const cs.Insn) *FCWSelf {
+    fn replacing(self: *Self, ins: *const cs.Insn) *Self {
         const offset = ins.address - @intFromPtr(self.code.ptr);
         const before_code = self.code[self.current_offset..offset];
         self.current_offset = offset + ins.size;
@@ -53,12 +53,12 @@ const FixedCodeWriter = struct {
         return self;
     }
 
-    fn append(self: *FCWSelf, slice: []const u8) *FCWSelf {
+    fn append(self: *Self, slice: []const u8) *Self {
         self.buf.appendSlice(slice) catch @panic("OOM");
         return self;
     }
 
-    fn addValueRef(self: *FCWSelf, comptime OffsetType: type, value: usize) *FCWSelf {
+    fn addValueRef(self: *Self, comptime OffsetType: type, value: usize) *Self {
         @setRuntimeSafety(false);
         const end_offset = self.new_buf.items.len;
         self.new_buf.appendNTimes(0, @sizeOf(usize)) catch @panic("OOM");
@@ -77,7 +77,7 @@ const FixedCodeWriter = struct {
         return self;
     }
 
-    fn addSliceRef(self: *FCWSelf, comptime OffsetType: type, slice: []const u8) *FCWSelf {
+    fn addSliceRef(self: *Self, comptime OffsetType: type, slice: []const u8) *Self {
         const end_offset = self.new_buf.items.len;
         self.new_buf.appendSlice(slice) catch @panic("OOM");
 
@@ -94,7 +94,7 @@ const FixedCodeWriter = struct {
         return self;
     }
 
-    fn addReuseRef(self: *FCWSelf, reuse_idx: usize) *FCWSelf {
+    fn addReuseRef(self: *Self, reuse_idx: usize) *Self {
         if (reuse_idx >= self.reuse_refs.items.len) {
             while (reuse_idx >= self.reuse_refs.items.len) {
                 const end_offset = self.new_buf.items.len;
@@ -117,7 +117,7 @@ const FixedCodeWriter = struct {
         return self;
     }
 
-    fn finalize(self: *FCWSelf) !FixedCode {
+    fn finalize(self: *Self) !FixedCode {
         @setRuntimeSafety(false);
         defer {
             self.buf.deinit();
@@ -210,7 +210,7 @@ fn fixCondJmpIns(ins: *const cs.Insn, writer: *FixedCodeWriter) void {
     _ = writer.replacing(ins);
 
     const do_rel32 = displacement.size >= 4 or blk: {
-        const worst_case_size = writer.new_buf.items.len + ((writer.remainingSize() / 6) * 25);
+        const worst_case_size = writer.new_buf.items.len + ((writer.remainingSize() / 6) * 56);
         if (std.math.maxInt(i8) < worst_case_size) break :blk true;
         break :blk false;
     };
@@ -269,6 +269,25 @@ pub fn fixMovIns(ins: *const cs.Insn, writer: *FixedCodeWriter) void {
         std.debug.assert(disp_offset > 0);
         const start = ins.bytes[0..disp_offset];
         const end = ins.bytes[disp_offset + disp_size .. ins.size];
+        // original ===>
+        // mov r, [rip+rel32]/mov [rip+rel32], r/sub/dec/imul [rip+rel32], etc...
+        // r = any general register
+
+        // Replaced with(approx 56 bytes) ===>
+        // push rax ; save rax register
+        // mov rax, {target_address} ; calculated from rip, rip+rel32
+        // mov rax, [rax]
+        // mov [rip+{our_temp_storage}], rax ; basically storing the value after reading it, to our temp storage
+        // pop rax ; restore rax register, no side effect
+        // mov r, [rip+{our_temp_storage}]/mov [{our_temp_storage}+rip], r/sub/dec/imul [rip+{our_temp_storage}]
+        // push rax
+        // mov rax, [{our_temp_storage}+rip]
+        // push rcx
+        // mov rcx, {target_address} ; calculated from rip, rip+rel32
+        // mov [rcx], rax ; store value from our temp storage back to the original
+        // pop rcx
+        // pop rax
+
         var bytes: [17]u8 = .{
             0x50, // push rax
             0x48, 0xB8, // mov rax, {}
@@ -298,22 +317,28 @@ pub fn fixMovIns(ins: *const cs.Insn, writer: *FixedCodeWriter) void {
             .append(end)
             .append(&.{
                 0x50, // push rax
-                0x48, 0x8B, 0x05, // mov rax, [rip + {}]
+                0x48, 0x8B, 0x05, // mov rax, [rip+{reuse0}]
             })
             .addReuseRef(0)
             .append(&ending_bytes);
     }
 }
 
-pub fn fix(allocator: std.mem.Allocator, disasm_iter_res: Disassembler.DisasmIterResult, reserve: usize) !FixedCode {
+/// Should return something like:
+/// ```
+/// <fixed_relative_instructions>
+/// <reserved_space>
+/// <additional instructions/values>(to fix the relative instructions and behave like the original ones)
+/// ```
+pub fn fix(allocator: std.mem.Allocator, handle: cs.Handle, code: []const u8, reserve: usize) !FixedCode {
     @setRuntimeSafety(false);
 
     var tmp_detail: cs.Detail = undefined;
     var tmp_ins: cs.Insn = undefined;
     tmp_ins.detail = &tmp_detail;
-    var iter = disasm_iter_res.csIter(&tmp_ins);
+    var iter = cs.disasmIter(handle, code, @intFromPtr(code.ptr), &tmp_ins);
 
-    var writer = try FixedCodeWriter.init(allocator, disasm_iter_res.code, reserve);
+    var writer = try FixedCodeWriter.init(allocator, code, reserve);
     while (iter.next()) |ins| {
         const detail = ins.detail orelse unreachable;
 
@@ -348,9 +373,7 @@ test "jmp/call" {
     var disasm = try Disassembler.create(.{});
     defer disasm.deinit();
 
-    const disasm_iter_res = disasm.disasmIter(code, .{});
-
-    const res = try fix(std.testing.allocator, disasm_iter_res, 0);
+    const res = try fix(std.testing.allocator, disasm.handle, code, 0);
     defer std.testing.allocator.free(res.code);
 
     var read_offset: usize = 0;
@@ -438,9 +461,7 @@ test "cond jmp" {
     var disasm = try Disassembler.create(.{});
     defer disasm.deinit();
 
-    const disasm_iter_res = disasm.disasmIter(code, .{});
-
-    const res = try fix(std.testing.allocator, disasm_iter_res, 0);
+    const res = try fix(std.testing.allocator, disasm.handle, code, 0);
     defer std.testing.allocator.free(res.code);
 
     // Helper function to extract jump offset and target address
@@ -522,9 +543,7 @@ test "lea" {
     var disasm = try Disassembler.create(.{});
     defer disasm.deinit();
 
-    const disasm_iter_res = disasm.disasmIter(code, .{});
-
-    const res = try fix(std.testing.allocator, disasm_iter_res, 0);
+    const res = try fix(std.testing.allocator, disasm.handle, code, 0);
     defer std.testing.allocator.free(res.code);
 
     var read_offset: usize = 0;
@@ -560,9 +579,7 @@ test "mov rax,[rip+rel32]" {
     var disasm = try Disassembler.create(.{});
     defer disasm.deinit();
 
-    const disasm_iter_res = disasm.disasmIter(code, .{});
-
-    const res = try fix(std.testing.allocator, disasm_iter_res, 0);
+    const res = try fix(std.testing.allocator, disasm.handle, code, 0);
     defer std.testing.allocator.free(res.code);
 
     //try std.testing.expectEqualSlices(u8, code, res.fixed_code);
@@ -622,9 +639,7 @@ test "mov [rip+rel32],rax" {
     var disasm = try Disassembler.create(.{});
     defer disasm.deinit();
 
-    const disasm_iter_res = disasm.disasmIter(code, .{});
-
-    const res = try fix(std.testing.allocator, disasm_iter_res, 0);
+    const res = try fix(std.testing.allocator, disasm.handle, code, 0);
     defer std.testing.allocator.free(res.code);
 
     // try std.testing.expectEqualSlices(u8, code, res.fixed_code);
@@ -684,9 +699,7 @@ test "dec [rip+rel32]" {
     var disasm = try Disassembler.create(.{});
     defer disasm.deinit();
 
-    const disasm_iter_res = disasm.disasmIter(code, .{});
-
-    const res = try fix(std.testing.allocator, disasm_iter_res, 0);
+    const res = try fix(std.testing.allocator, disasm.handle, code, 0);
     defer std.testing.allocator.free(res.code);
 
     //try std.testing.expectEqualSlices(u8, code, res.fixed_code);
@@ -756,9 +769,7 @@ test "mixed" {
     var disasm = try Disassembler.create(.{});
     defer disasm.deinit();
 
-    const disasm_iter_res = disasm.disasmIter(code, .{});
-
-    const res = try fix(std.testing.allocator, disasm_iter_res, 14);
+    const res = try fix(std.testing.allocator, disasm.handle, code, 14);
     defer std.testing.allocator.free(res.code);
 
     //try std.testing.expectEqualSlices(u8, code, res.fixed_code);
@@ -854,9 +865,7 @@ test "call [rdx]" {
     var disasm = try Disassembler.create(.{});
     defer disasm.deinit();
 
-    const disasm_iter_res = disasm.disasmIter(code, .{});
-
-    const res = try fix(std.testing.allocator, disasm_iter_res, 14);
+    const res = try fix(std.testing.allocator, disasm.handle, code, 14);
     defer std.testing.allocator.free(res.code);
 
     try std.testing.expectEqualSlices(u8, &[_]u8{
