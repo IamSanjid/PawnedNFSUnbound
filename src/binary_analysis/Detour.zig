@@ -268,7 +268,7 @@ pub fn copyToAsExecutable(to: usize, code: []const u8) !void {
     }
 }
 
-test "usage" {
+test "usage x86_64" {
     @setRuntimeSafety(false);
     const allocator = std.testing.allocator;
     var detour = try Self.init(allocator);
