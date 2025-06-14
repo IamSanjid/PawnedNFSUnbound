@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const assert = std.debug.assert;
+
 const Allocator = std.mem.Allocator;
 
 fn bitsMaxInt(bit_count: usize) usize {
@@ -268,7 +270,7 @@ pub const Scanner = struct {
     };
 
     pub const SearchContext = struct {
-        const SearchResult = std.AutoArrayHashMap(usize, AddressRange);
+        const SearchResult = std.ArrayList(AddressRange);
         scanner: *Scanner,
         result: SearchResult,
 
@@ -327,11 +329,18 @@ pub const Scanner = struct {
         pub fn searchPattern(self: *SearchContext, pattern: Pattern, options: SearchOptions) !void {
             @setRuntimeSafety(false);
 
-            const result = self.result.values();
+            const result = self.result.items;
             const search_ranges = if (result.len == 0) self.scanner.search_ranges.items else result;
+
+            var new_result = std.ArrayList(AddressRange).init(self.scanner.allocator);
+            defer new_result.deinit();
+
             for (search_ranges) |range| {
+                assert(range.start <= range.end);
+
                 var start = range.start;
                 region_loop: while (start <= range.end - pattern.bytes.len) : (start += @sizeOf(u8)) {
+                    @setRuntimeSafety(false);
                     const search_memory: [*]u8 = @ptrFromInt(start);
 
                     for (pattern.bytes, pattern.mask, 0..) |byte, mask, i| {
@@ -339,34 +348,45 @@ pub const Scanner = struct {
                         if (search_memory[i] & mask != byte) continue :region_loop;
                     }
 
-                    try self.result.put(start, .{ .start = start, .end = start + pattern.bytes.len });
+                    try new_result.append(.{ .start = start, .end = start + pattern.bytes.len });
 
                     if (options.find_one_per_range) {
                         break;
                     }
                 }
             }
+
+            self.result.clearRetainingCapacity();
+            try self.result.appendSlice(new_result.items);
         }
 
         pub fn searchBytes(self: *SearchContext, bytes: []const u8, options: SearchOptions) !void {
-            @setRuntimeSafety(false);
-
-            const result = self.result.values();
+            const result = self.result.items;
             const search_ranges = if (result.len == 0) self.scanner.search_ranges.items else result;
+
+            var new_result = std.ArrayList(AddressRange).init(self.scanner.allocator);
+            defer new_result.deinit();
+
             for (search_ranges) |range| {
+                assert(range.start <= range.end);
+
                 var start = range.start;
                 while (start <= range.end - bytes.len) : (start += @sizeOf(u8)) {
+                    @setRuntimeSafety(false);
                     const search_memory: [*]u8 = @ptrFromInt(start);
 
                     if (!std.mem.eql(u8, search_memory[0..bytes.len], bytes)) continue;
 
-                    try self.result.put(start, .{ .start = start, .end = start + bytes.len });
+                    try new_result.append(.{ .start = start, .end = start + bytes.len });
 
                     if (options.find_one_per_range) {
                         break;
                     }
                 }
             }
+
+            self.result.clearRetainingCapacity();
+            try self.result.appendSlice(new_result.items);
         }
 
         pub fn deinit(self: *SearchContext) void {
@@ -475,10 +495,17 @@ test "Scanner" {
         defer pattern.deinit();
 
         try search.search(pattern, .{});
-        try std.testing.expectEqual(1, search.result.values().len);
+        var result = search.result.items;
+        try std.testing.expectEqual(1, result.len);
+        try std.testing.expectEqual(@intFromPtr(search_memory.ptr), result[0].start);
 
+        // cannot find the full memory because we searched for 5 bytes previously but full memory is 8 bytes
         try search.searchBytes(search_memory, .{});
-        const result = search.result.values();
+        result = search.result.items;
+        try std.testing.expectEqual(0, result.len);
+
+        try search.searchBytes(search_memory[0..5], .{});
+        result = search.result.items;
         try std.testing.expectEqual(1, result.len);
         try std.testing.expectEqual(@intFromPtr(search_memory.ptr), result[0].start);
     }
@@ -488,7 +515,7 @@ test "Scanner" {
         defer search.deinit();
 
         try search.searchScalar(u8, 0x69, .{});
-        const result = search.result.values();
+        const result = search.result.items;
         try std.testing.expectEqual(2, result.len);
         try std.testing.expectEqual(@intFromPtr(search_memory.ptr), result[0].start);
         try std.testing.expectEqual(@intFromPtr(search_memory.ptr) + 3, result[1].start);
@@ -499,7 +526,7 @@ test "Scanner" {
         defer search.deinit();
 
         try search.searchScalar(u16, 0xFF42, .{});
-        const result = search.result.values();
+        const result = search.result.items;
         try std.testing.expectEqual(1, result.len);
         try std.testing.expectEqual(@intFromPtr(search_memory.ptr) + 1, result[0].start);
     }
@@ -509,7 +536,7 @@ test "Scanner" {
         defer search.deinit();
 
         try search.searchScalar(usize, 0x2010004269FF4269, .{});
-        const result = search.result.values();
+        const result = search.result.items;
         try std.testing.expectEqual(1, result.len);
         try std.testing.expectEqual(@intFromPtr(search_memory.ptr), result[0].start);
     }

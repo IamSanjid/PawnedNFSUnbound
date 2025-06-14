@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const ba = @import("binary_analysis");
 
 const GeneralRegisters = extern struct {
     r15: usize = 0,
@@ -218,7 +219,7 @@ const stack_state_saver = struct {
     , .{});
 };
 
-pub fn hookFn() callconv(.naked) noreturn {
+fn hookFn() callconv(.naked) noreturn {
     @setRuntimeSafety(false);
 
     asm volatile (stack_state_saver.save_call_hook_template
@@ -248,8 +249,45 @@ pub fn hookFn() callconv(.naked) noreturn {
     );
 }
 
+var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+const allocator = arena.allocator();
+
+var scanner = ba.aob.Scanner.init(allocator);
+
+/// Initializes the *${HOOK_NAME}* hook with the given detour context.
+pub fn init(detour: *ba.Detour) !void {
+    _ = arena.reset(.free_all);
+
+    const module = (try ba.windows.getModuleInfo(allocator, base_module)) orelse return error.ModuleNotFound;
+    defer module.deinit(allocator);
+
+    const hook_target = module.start + ${HOOK_OFFSET}; // hook offset in the module
+    const hook_fn_start = @intFromPtr(&hookFn);
+    const attached_info = try detour.attach(hook_target, hook_fn_start);
+
+    try scanner.search_ranges.append(.{
+        .start = hook_fn_start,
+        .end = hook_fn_start + 512,
+    });
+
+    var search_ctx = scanner.newSearch();
+    defer search_ctx.deinit();
+    try search_ctx.searchBytes(&hook_fn_end_signature, .{ .find_one_per_range = true });
+    const hook_fn_end = search_ctx.result.getLast().start;
+
+    _ = try ba.Detour.emitJmp(hook_fn_end, attached_info.trampoline, null);
+}
+
+/// Cleans up resources allocated by the *${HOOK_NAME}* hook
+pub fn deinit() void {
+    _ = arena.reset(.free_all);
+    arena.deinit();
+}
+
+pub const hook_fn_end_signature = [_]u8{ 0x90, 0xCC } ** 8;
 pub const name = "${HOOK_NAME}";
+pub const base_module = "${HOOK_BASE_MODULE}";
 
 fn onHook(regs: *GeneralRegisters) callconv(.c) void {
-    std.debug.print("On {s} hook! Regs: 0x{X}\n", .{ name, regs });
+    std.debug.print("On {s} hook! Regs: 0x{X}\n", .{ name, @intFromPtr(regs) });
 }

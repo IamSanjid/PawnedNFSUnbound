@@ -254,14 +254,14 @@ const allocator = arena.allocator();
 
 var scanner = ba.aob.Scanner.init(allocator);
 
-/// Initializes the *DoSomething* hook with the given detour context.
+/// Initializes the *CopyRaceVehicleConfig* hook with the given detour context.
 pub fn init(detour: *ba.Detour) !void {
     _ = arena.reset(.free_all);
 
     const module = (try ba.windows.getModuleInfo(allocator, base_module)) orelse return error.ModuleNotFound;
     defer module.deinit(allocator);
 
-    const hook_target = module.start + 0x182C2; // hook offset in the module
+    const hook_target = module.start + 0x25A1737;
     const hook_fn_start = @intFromPtr(&hookFn);
     const attached_info = try detour.attach(hook_target, hook_fn_start);
 
@@ -278,15 +278,15 @@ pub fn init(detour: *ba.Detour) !void {
     _ = try ba.Detour.emitJmp(hook_fn_end, attached_info.trampoline, null);
 }
 
-/// Cleans up resources allocated by the *DoSomething* hook
+/// Cleans up resources allocated by the *CopyRaceVehicleConfig* hook
 pub fn deinit() void {
     _ = arena.reset(.free_all);
     arena.deinit();
 }
 
 pub const hook_fn_end_signature = [_]u8{ 0x90, 0xCC } ** 8;
-pub const name = "DoSomething";
-pub const base_module = "ptest.exe";
+pub const name = "CopyRaceVehicleConfig";
+pub const base_module = "NeedForSpeedUnbound.exe";
 
 fn onHook(regs: *GeneralRegisters) callconv(.c) void {
     std.debug.print("On {s} hook! Regs: 0x{X}\n", .{ name, @intFromPtr(regs) });

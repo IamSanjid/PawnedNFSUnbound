@@ -1,4 +1,5 @@
-const windows = @import("std").os.windows;
+const std = @import("std");
+const windows = std.os.windows;
 const windows_extra = @import("windows_extra");
 
 pub const x86_64 = @import("x86_64/x86_64.zig");
@@ -23,4 +24,29 @@ pub fn copyToAsExecutable(to: usize, code: []const u8) !void {
     try windows.VirtualProtect(address_ptr, code.len, old_protect, &dummy);
 
     clearInstructionCache(bytes);
+}
+
+pub const ModuleInfo = struct {
+    name: []const u8,
+    start: usize,
+    end: usize,
+
+    pub fn deinit(self: ModuleInfo, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+    }
+};
+
+pub fn getModuleInfo(allocator: std.mem.Allocator, module_name: []const u8) !?ModuleInfo {
+    const module_name_w = std.unicode.utf8ToUtf16LeAllocZ(allocator, module_name) catch return null;
+    defer allocator.free(module_name_w);
+
+    const module = windows.kernel32.GetModuleHandleW(module_name_w) orelse return null;
+
+    var mod_info: windows.MODULEINFO = undefined;
+    if (windows_extra.GetModuleInformation(windows.GetCurrentProcess(), module, &mod_info, @sizeOf(windows.MODULEINFO)) == windows.FALSE) return null;
+    return .{
+        .name = try allocator.dupe(u8, module_name),
+        .start = @intFromPtr(module),
+        .end = @intFromPtr(module) + mod_info.SizeOfImage,
+    };
 }

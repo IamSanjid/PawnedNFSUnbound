@@ -74,12 +74,11 @@ pub fn build(b: *std.Build) !void {
         break :blk null;
     };
     const hook_base_module = b.option([]const u8, "hook-base-module", "The base module eg. `something.exe`") orelse "NeedForSpeedUnbound.exe";
-    var generate_hook = @import("build/GenerateHook.zig").create(
-        b,
-        hook_name_option,
-        hook_offset_option,
-        hook_base_module,
-    );
+    var generate_hook = @import("build/GenerateHook.zig").create(b, .{
+        .name = hook_name_option,
+        .offset = hook_offset_option,
+        .base_module = hook_base_module,
+    });
     hook_cmd.dependOn(&generate_hook.step);
 
     const target = b.standardTargetOptions(.{

@@ -121,8 +121,6 @@ inline fn map(n: usize) ?[*]u8 {
 
 // should be aligned already our slab_len is `std.heap.pageSize()`
 inline fn unmap(memory: []align(std.heap.page_size_min) u8) void {
-    if (memory.len == 0) return;
-
     if (builtin.os.tag == .windows) {
         const base_addr: windows.PVOID = @ptrCast(memory.ptr);
         windows.VirtualFree(base_addr, 0, windows.MEM_RELEASE);

@@ -11,7 +11,13 @@ const Self = @This();
 const src_dir: []const u8 = "src";
 const output_dir: []const u8 = "hooks";
 
-pub fn create(b: *std.Build, name: ?[]const u8, offset: ?usize, base_module: []const u8) *Self {
+pub const Options = struct {
+    name: ?[]const u8 = null,
+    offset: ?usize,
+    base_module: []const u8,
+};
+
+pub fn create(b: *std.Build, options: Options) *Self {
     const self = b.allocator.create(Self) catch @panic("OOM");
     self.* = .{
         .step = std.Build.Step.init(.{
@@ -21,9 +27,9 @@ pub fn create(b: *std.Build, name: ?[]const u8, offset: ?usize, base_module: []c
             .makeFn = make,
         }),
         .builder = b,
-        .hook_name = name,
-        .hook_offset = offset,
-        .hook_base_module = base_module,
+        .hook_name = options.name,
+        .hook_offset = options.offset,
+        .hook_base_module = options.base_module,
     };
 
     return self;
@@ -42,7 +48,7 @@ fn make(step: *std.Build.Step, options: std.Build.Step.MakeOptions) anyerror!voi
 
     const hook_src_path = try self.generateHookFile(allocator);
     defer allocator.free(hook_src_path);
-    try self.modifyHooks(allocator, hook_src_path);
+    try modifyHooks(allocator, hook_src_path);
 }
 
 fn generateHookFile(self: *Self, allocator: std.mem.Allocator) ![]const u8 {
@@ -52,7 +58,19 @@ fn generateHookFile(self: *Self, allocator: std.mem.Allocator) ![]const u8 {
     };
 
     const hook_template = @embedFile("hook_template.zig");
-    const hook_content = try std.mem.replaceOwned(u8, allocator, hook_template, "${HOOK_NAME}", self.hook_name.?);
+    const hook_content = blk: {
+        const hook_name_replaced = try std.mem.replaceOwned(u8, allocator, hook_template, "${HOOK_NAME}", self.hook_name.?);
+        defer allocator.free(hook_name_replaced);
+
+        const offset_str = try std.fmt.allocPrint(allocator, "0x{X}", .{self.hook_offset orelse 0});
+        defer allocator.free(offset_str);
+
+        const hook_offset_replaced = try std.mem.replaceOwned(u8, allocator, hook_name_replaced, "${HOOK_OFFSET}", offset_str);
+        defer allocator.free(hook_offset_replaced);
+
+        const hook_base_module_replaced = try std.mem.replaceOwned(u8, allocator, hook_offset_replaced, "${HOOK_BASE_MODULE}", self.hook_base_module);
+        break :blk hook_base_module_replaced;
+    };
     defer allocator.free(hook_content);
 
     const hook_file_name = try std.fmt.allocPrint(allocator, "{s}.zig", .{self.hook_name.?});
@@ -72,7 +90,7 @@ fn generateHookFile(self: *Self, allocator: std.mem.Allocator) ![]const u8 {
     return rel_hook_file_path;
 }
 
-fn modifyHooks(self: *Self, allocator: std.mem.Allocator, hook_src_path: []const u8) !void {
+fn modifyHooks(allocator: std.mem.Allocator, hook_src_path: []const u8) !void {
     const hooks_file_path = src_dir ++ "/Hooks.zig";
     const hooks_source_file = try std.fs.cwd().openFile(hooks_file_path, .{});
     defer hooks_source_file.close();
@@ -80,11 +98,16 @@ fn modifyHooks(self: *Self, allocator: std.mem.Allocator, hook_src_path: []const
     const source_code = try std.zig.readSourceFileToEndAlloc(allocator, hooks_source_file, null);
     defer allocator.free(source_code);
 
-    const modified_source = try self.modifyHooksInit(allocator, source_code, hook_src_path);
-    defer allocator.free(modified_source);
-
-    const final_source = try self.modifyHooksGetAddressForHook(allocator, modified_source);
+    const final_source = blk: {
+        const modified_for_hooks_init = try modifyHooksInit(allocator, source_code, hook_src_path);
+        defer allocator.free(modified_for_hooks_init);
+        const modified_for_hooks_deinit = try modifyHooksDeinit(allocator, modified_for_hooks_init, hook_src_path);
+        break :blk modified_for_hooks_deinit;
+    };
     defer allocator.free(final_source);
+
+    // const final_source = try self.modifyHooksGetAddressForHook(allocator, modified_source);
+    // defer allocator.free(final_source);
 
     const file = try std.fs.cwd().createFile(hooks_file_path, .{});
     defer file.close();
@@ -92,7 +115,7 @@ fn modifyHooks(self: *Self, allocator: std.mem.Allocator, hook_src_path: []const
     std.log.info("Updated src/Hooks.zig accordingly.", .{});
 }
 
-fn modifyHooksInit(self: *Self, allocator: std.mem.Allocator, source_code_z: [:0]const u8, hooks_src_path: []const u8) ![:0]u8 {
+fn modifyHooksInit(allocator: std.mem.Allocator, source_code_z: [:0]const u8, hooks_src_path: []const u8) ![:0]u8 {
     var ast = std.zig.Ast.parse(allocator, source_code_z, .zig) catch |err| {
         std.log.err("Failed to parse Hooks.zig: {}", .{err});
         return err;
@@ -121,7 +144,7 @@ fn modifyHooksInit(self: *Self, allocator: std.mem.Allocator, source_code_z: [:0
 
             const last_token_tag = ast.tokenTag(last_token);
             if (last_token_tag != .r_brace) {
-                std.log.err("Couldn't find the ending of the `init` function...", .{});
+                std.log.err("Couldn't find the ending of the `init` function", .{});
                 return error.FnEndNotFound;
             }
 
@@ -132,12 +155,66 @@ fn modifyHooksInit(self: *Self, allocator: std.mem.Allocator, source_code_z: [:0
             const insertion_code = try std.fmt.allocPrint(
                 allocator,
                 \\    // Auto-Generated!!!
-                \\    _ = try hookAbsolute("{s}", "{s}", @intFromPtr(&(@import("{s}").hookFn)));
+                \\    try @import("{s}").init(&detour.?);
             ,
-                .{ self.hook_base_module, self.hook_name.?, hooks_src_path },
+                .{hooks_src_path},
             );
             defer allocator.free(insertion_code);
             return try std.fmt.allocPrintZ(allocator, "{s}\n{s}\n{s}", .{ before_insertion, insertion_code, after_insertion });
+        }
+    }
+
+    return error.InitFnNotFound;
+}
+
+fn modifyHooksDeinit(allocator: std.mem.Allocator, source_code_z: [:0]const u8, hooks_src_path: []const u8) ![:0]u8 {
+    var ast = std.zig.Ast.parse(allocator, source_code_z, .zig) catch |err| {
+        std.log.err("Failed to parse Hooks.zig: {}", .{err});
+        return err;
+    };
+    defer ast.deinit(allocator);
+
+    if (ast.errors.len > 0) {
+        std.log.err("Parse errors found in Hooks.zig:", .{});
+        for (ast.errors) |parse_error| {
+            std.log.err("  {}", .{parse_error});
+        }
+        return error.ParseError;
+    }
+
+    for (ast.rootDecls()) |idx| {
+        const tag = ast.nodeTag(idx);
+        if (tag != .fn_decl) {
+            continue;
+        }
+        var buffer: [1]std.zig.Ast.Node.Index = undefined;
+        const fn_proto = ast.fullFnProto(&buffer, idx) orelse continue;
+        const name = ast.tokenSlice(fn_proto.ast.fn_token + 1);
+
+        if (std.ascii.eqlIgnoreCase(name, "deinit")) {
+            const proto_last_token = ast.lastToken(fn_proto.ast.proto_node);
+            const token_tag = ast.tokenTag(proto_last_token + 1);
+            if (token_tag != .l_brace) {
+                std.log.err("Couldn't find the start of the `deinit` function, token tag: {s}", .{@tagName(token_tag)});
+                return error.FnEndNotFound;
+            }
+
+            var start = ast.tokenStart(proto_last_token + 1) + 1; // +1 to skip the `{` token
+            if (ast.source[start] == '\n') {
+                start += 1; // skip the newline after the `{`
+            }
+
+            const before_insertion = ast.source[0..start];
+            const after_insertion = ast.source[start..];
+            const insertion_code = try std.fmt.allocPrint(
+                allocator,
+                \\    // Auto-Generated!!!
+                \\    @import("{s}").deinit();
+            ,
+                .{hooks_src_path},
+            );
+            defer allocator.free(insertion_code);
+            return try std.fmt.allocPrintZ(allocator, "{s}{s}\n{s}", .{ before_insertion, insertion_code, after_insertion });
         }
     }
 
