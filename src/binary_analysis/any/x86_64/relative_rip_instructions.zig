@@ -1,157 +1,64 @@
 const std = @import("std");
 
+const apb = @import("asm_patch_buffer");
 const Disassembler = @import("disasm").x86;
 const cs = @import("disasm").capstone;
+
+const bytes = apb.bytes;
+const patternMatchBytes = apb.patternMatchBytes;
+const reference = apb.reference;
+const useReference = apb.useReference;
+const reusableReference = apb.reusableReference;
+const reusableReferenceOrCreate = apb.reusableReferenceOrCreate;
+const mark = apb.mark;
 
 pub const FixedCode = struct {
     code: []const u8,
     reserved_offset: usize,
 };
 
-const FixedCodeRef = struct {
-    write_offset: usize,
-    write_size: usize,
-    start_offset: usize,
-    end_offset: usize,
-};
-
-const FixedCodeWriter = struct {
-    code: []const u8,
-    buf: std.ArrayList(u8),
-    new_buf: std.ArrayList(u8),
-    refs: std.ArrayList(FixedCodeRef),
-    reuse_refs: std.ArrayList(usize),
-    current_offset: usize = 0,
-
+const Patcher = struct {
+    buffer: apb.AsmPatchBuffer,
     const Self = @This();
 
-    fn init(allocator: std.mem.Allocator, code: []const u8, reserve: usize) !Self {
-        var new_buf = std.ArrayList(u8).init(allocator);
-        try new_buf.appendNTimes(0x90, reserve);
-        return .{
-            .code = code,
-            .buf = std.ArrayList(u8).init(allocator),
-            .new_buf = new_buf,
-            .refs = std.ArrayList(FixedCodeRef).init(allocator),
-            .reuse_refs = std.ArrayList(usize).init(allocator),
-        };
+    fn deinit(self: *Self) void {
+        self.buffer.deinit();
     }
 
-    fn remainingSize(self: Self) usize {
-        return self.code[self.current_offset..].len;
+    fn replace(self: *Self, ins: *const cs.Insn, with: anytype) !void {
+        const offset = ins.address - @intFromPtr(self.buffer.original.ptr);
+        try self.buffer.copyUntilOffset(offset);
+        return self.buffer.replace(ins.size, with);
     }
 
-    fn size(self: Self) usize {
-        return self.buf.items.len + self.new_buf.items.len;
-    }
-
-    fn replacing(self: *Self, ins: *const cs.Insn) *Self {
-        const offset = ins.address - @intFromPtr(self.code.ptr);
-        const before_code = self.code[self.current_offset..offset];
-        self.current_offset = offset + ins.size;
-        self.buf.appendSlice(before_code) catch @panic("OOM");
-        return self;
-    }
-
-    fn append(self: *Self, slice: []const u8) *Self {
-        self.buf.appendSlice(slice) catch @panic("OOM");
-        return self;
-    }
-
-    fn addValueRef(self: *Self, comptime OffsetType: type, value: usize) *Self {
+    fn finalize(self: *Self, reserve_bytes: usize) !FixedCode {
         @setRuntimeSafety(false);
-        const end_offset = self.new_buf.items.len;
-        self.new_buf.appendNTimes(0, @sizeOf(usize)) catch @panic("OOM");
-        @as(*usize, @ptrFromInt(@intFromPtr(self.new_buf.items[end_offset..].ptr))).* = value;
-
-        const write_offset = self.buf.items.len;
-        self.buf.appendNTimes(0, @sizeOf(OffsetType)) catch @panic("OOM");
-
-        self.refs.append(FixedCodeRef{
-            .write_size = @sizeOf(OffsetType),
-            .write_offset = write_offset,
-            .start_offset = self.buf.items.len,
-            .end_offset = end_offset,
-        }) catch @panic("OOM");
-
-        return self;
-    }
-
-    fn addSliceRef(self: *Self, comptime OffsetType: type, slice: []const u8) *Self {
-        const end_offset = self.new_buf.items.len;
-        self.new_buf.appendSlice(slice) catch @panic("OOM");
-
-        const write_offset = self.buf.items.len;
-        self.buf.appendNTimes(0, @sizeOf(OffsetType)) catch @panic("OOM");
-
-        self.refs.append(FixedCodeRef{
-            .write_size = @sizeOf(OffsetType),
-            .write_offset = write_offset,
-            .start_offset = self.buf.items.len,
-            .end_offset = end_offset,
-        }) catch @panic("OOM");
-
-        return self;
-    }
-
-    fn addReuseRef(self: *Self, reuse_idx: usize) *Self {
-        if (reuse_idx >= self.reuse_refs.items.len) {
-            while (reuse_idx >= self.reuse_refs.items.len) {
-                const end_offset = self.new_buf.items.len;
-                self.new_buf.appendNTimes(0, @sizeOf(usize)) catch @panic("OOM");
-
-                self.reuse_refs.append(end_offset) catch @panic("OOM");
-            }
-        }
-
-        const write_offset = self.buf.items.len;
-        self.buf.appendNTimes(0, @sizeOf(i32)) catch @panic("OOM");
-
-        self.refs.append(FixedCodeRef{
-            .write_size = @sizeOf(i32),
-            .write_offset = write_offset,
-            .start_offset = self.buf.items.len,
-            .end_offset = self.reuse_refs.items[reuse_idx],
-        }) catch @panic("OOM");
-
-        return self;
-    }
-
-    fn finalize(self: *Self) !FixedCode {
-        @setRuntimeSafety(false);
+        var committed = try self.buffer.copyRestAndCommitOwned(reserve_bytes);
         defer {
-            self.buf.deinit();
-            self.new_buf.deinit();
-            self.refs.deinit();
-            self.reuse_refs.deinit();
+            committed.refrences.deinit();
+            committed.markers.deinit();
         }
 
-        const remaining_code = self.code[self.current_offset..];
-        try self.buf.appendSlice(remaining_code);
+        @memset(committed.buffer[committed.reserved_offset .. committed.reserved_offset + reserve_bytes], 0x90);
 
-        const new_code_offset = self.buf.items.len;
-        try self.buf.appendSlice(self.new_buf.items);
-
-        for (self.refs.items) |ref| {
-            const added_bytes_len = new_code_offset - ref.start_offset;
-            const new_offset = added_bytes_len + ref.end_offset;
-            if (ref.write_size == 4) {
-                @as(*i32, @ptrFromInt(@intFromPtr(self.buf.items[ref.write_offset..].ptr))).* = @intCast(new_offset);
-            } else if (ref.write_size == 1) {
-                @as(*i8, @ptrFromInt(@intFromPtr(self.buf.items[ref.write_offset..].ptr))).* = @intCast(new_offset);
+        for (committed.refrences.items) |ref| {
+            if (ref.size == 4) {
+                @as(*i32, @ptrFromInt(@intFromPtr(committed.buffer[ref.offset..].ptr))).* = @intCast(ref.value_offset);
+            } else if (ref.size == 1) {
+                @as(*i8, @ptrFromInt(@intFromPtr(committed.buffer[ref.offset..].ptr))).* = @intCast(ref.value_offset);
             } else {
                 unreachable;
             }
         }
 
         return .{
-            .code = try self.buf.toOwnedSlice(),
-            .reserved_offset = new_code_offset,
+            .code = committed.buffer,
+            .reserved_offset = committed.reserved_offset,
         };
     }
 };
 
-fn fixCallJmpIns(ins: *const cs.Insn, comptime call: bool, writer: *FixedCodeWriter) void {
+fn fixCallJmpIns(ins: *const cs.Insn, comptime call: bool, patcher: *Patcher) !void {
     @setRuntimeSafety(false);
     const detail = ins.detail orelse unreachable;
     const x86 = detail.arch.x86;
@@ -172,34 +79,33 @@ fn fixCallJmpIns(ins: *const cs.Insn, comptime call: bool, writer: *FixedCodeWri
 
     if (accessing_memory) {
         // TODO: Change this to mov rax, imm64 variant....
-        _ = writer
-            .replacing(ins)
-            .append(&.{
+        try patcher.replace(ins, .{
+            bytes(.{
                 0x50, // push rax
                 0x48, 0x8B, 0x05, // mov rax, [rip + {}]
-            })
-            .addValueRef(i32, target_address)
-            .append(&.{
+            }),
+            reference(@sizeOf(i32), .{target_address}),
+            bytes(.{
                 0x48, 0x8B, 0x00, // mov rax, [rax]
                 0x48, 0x89, 0x05, // mov [rip+{reuse0}], rax
-            })
-            .addReuseRef(0)
-            .append(&.{
+            }),
+            reusableReferenceOrCreate(0, @sizeOf(i32), .{@as(usize, 0)}),
+            bytes(.{
                 0x58, // pop rax
                 0xFF, opcode, // call/jmp [rip+reuse0]
-            })
-            .addReuseRef(0);
+            }),
+            reusableReference(0),
+        });
     } else {
-        _ = writer
-            .replacing(ins)
-            .append(&.{
-                0xFF, opcode, // call/jmp [rip+{}]
-            })
-            .addValueRef(i32, target_address);
+        try patcher.replace(ins, .{
+            // call/jmp [rip+{}]
+            bytes(.{ 0xFF, opcode }),
+            reference(@sizeOf(i32), .{target_address}),
+        });
     }
 }
 
-fn fixCondJmpIns(ins: *const cs.Insn, writer: *FixedCodeWriter) void {
+fn fixCondJmpIns(ins: *const cs.Insn, patcher: *Patcher) !Rel32JmpIns {
     @setRuntimeSafety(false);
     const detail = ins.detail orelse unreachable;
     const x86 = detail.arch.x86;
@@ -207,41 +113,25 @@ fn fixCondJmpIns(ins: *const cs.Insn, writer: *FixedCodeWriter) void {
 
     const target_address: usize = @intCast(@as(isize, @intCast(ins.address)) + ins.size + displacement.value);
 
-    _ = writer.replacing(ins);
+    var jmp_ins: Rel32JmpIns = undefined;
+    const opcode = if (x86.opcode[0] & 0x70 != 0x00) 0x80 | (x86.opcode[0] & 0x0F) else x86.opcode[1];
 
-    const do_rel32 = displacement.size >= 4 or blk: {
-        const worst_case_size = writer.new_buf.items.len + ((writer.remainingSize() / 6) * 56);
-        if (std.math.maxInt(i8) < worst_case_size) break :blk true;
-        break :blk false;
-    };
+    if (displacement.size >= 4) jmp_ins.orig_opcode = opcode else jmp_ins.orig_opcode = x86.opcode[0];
+    jmp_ins.opcode = opcode;
+    jmp_ins.ref_id = patcher.buffer.references.items.len;
 
-    var jmp_bytes: [14]u8 = .{
-        0xFF, 0x25, 0x00, 0x00, 0x00, 0x00, // jmp [rip+0]
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // address 64bit value
-    };
-    @as(*usize, @ptrFromInt(@intFromPtr(jmp_bytes[6..].ptr))).* = target_address;
-
-    // zig fmt: off
-    if (do_rel32) {
-        const opcode = if (x86.opcode[0] & 0x70 != 0x00) 0x80 | (x86.opcode[0] & 0x0F) else x86.opcode[1];
-
-        _ = writer
-            .append(&.{
-                0x0F,
-                opcode,
-            })
-            .addSliceRef(i32, &jmp_bytes);
-    } else {
-        _ = writer
-            .append(&.{
-                x86.opcode[0],
-            })
-            .addSliceRef(i8, &jmp_bytes);
-    }
-    // zig fmt: on
+    try patcher.replace(ins, .{
+        mark(.pos, &jmp_ins.mark_id),
+        bytes(.{ 0x0F, opcode }),
+        reference(@sizeOf(i32), bytes(.{
+            0xFF, 0x25, 0x00, 0x00, 0x00, 0x00, // jmp [rip+0]
+            target_address, // address 64bit value
+        })),
+    });
+    return jmp_ins;
 }
 
-pub fn fixMovIns(ins: *const cs.Insn, writer: *FixedCodeWriter) void {
+pub fn fixMovIns(ins: *const cs.Insn, patcher: *Patcher) !void {
     @setRuntimeSafety(false);
     const detail = ins.detail orelse unreachable;
     const x86 = detail.arch.x86;
@@ -253,15 +143,13 @@ pub fn fixMovIns(ins: *const cs.Insn, writer: *FixedCodeWriter) void {
         const r7_reg = x86.rex == 0x48;
         const mov_rex: u8 = if (r7_reg) 0x48 else 0x49;
         const mov_opcode = 0xB8 + ((x86.modrm >> 3) & 0x07); // Extract bits 5-3
-        var bytes: [10]u8 = .{
-            mov_rex, // rex
-            mov_opcode, // mov opcode
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Placeholder for the address
-        };
-        @as(*usize, @ptrFromInt(@intFromPtr(bytes[2..].ptr))).* = target_address;
-        _ = writer
-            .replacing(ins)
-            .append(&bytes);
+        try patcher.replace(ins, .{
+            bytes(.{
+                mov_rex, // rex
+                mov_opcode, // mov opcode
+                target_address, // imm64 value
+            }),
+        });
     } else {
         // TODO: Optimize it... Doesn't support avx/simd floating point movs...
         const disp_offset = x86.encoding.disp_offset;
@@ -287,40 +175,59 @@ pub fn fixMovIns(ins: *const cs.Insn, writer: *FixedCodeWriter) void {
         // mov [rcx], rax ; store value from our temp storage back to the original
         // pop rcx
         // pop rax
-
-        var bytes: [17]u8 = .{
-            0x50, // push rax
-            0x48, 0xB8, // mov rax, {}
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Placeholder for the address
-            0x48, 0x8B, 0x00, // mov rax, [rax]
-            0x48, 0x89, 0x05, // mov [rip+{reuse0}], rax
-        };
-        @as(*usize, @ptrFromInt(@intFromPtr(bytes[3..].ptr))).* = target_address;
-        var ending_bytes: [16]u8 = .{
-            0x51, // push rcx
-            0x48, 0xB9, // mov rcx, {}
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Placeholder for the address
-            0x48, 0x89, 0x01, // mov [rcx], rax
-            0x59, // pop rcx
-            0x58, // pop rax
-        };
-        @as(*usize, @ptrFromInt(@intFromPtr(ending_bytes[3..].ptr))).* = target_address;
-        _ = writer
-            .replacing(ins)
-            .append(&bytes)
-            .addReuseRef(0)
-            .append(&.{
-                0x58, // pop rax
-            })
-            .append(start)
-            .addReuseRef(0)
-            .append(end)
-            .append(&.{
+        try patcher.replace(ins, .{
+            bytes(.{
+                0x50, // push rax
+                0x48, 0xB8, target_address, // mov rax, ${target_address}
+                0x48, 0x8B, 0x00, // mov rax, [rax]
+                0x48, 0x89, 0x05, // mov [rip+{reuse0}], rax
+            }),
+            reusableReferenceOrCreate(0, @sizeOf(i32), .{@as(usize, 0)}),
+            // pop rax
+            bytes(.{0x58}),
+            bytes(start),
+            reusableReference(0),
+            bytes(end),
+            bytes(.{
                 0x50, // push rax
                 0x48, 0x8B, 0x05, // mov rax, [rip+{reuse0}]
-            })
-            .addReuseRef(0)
-            .append(&ending_bytes);
+            }),
+            reusableReference(0),
+            bytes(.{
+                0x51, // push rcx
+                0x48, 0xB9, target_address, // mov rcx, ${target_address}
+                0x48, 0x89, 0x01, // mov [rcx], rax
+                0x59, // pop rcx
+                0x58, // pop rax
+            }),
+        });
+    }
+}
+
+const Rel32JmpIns = struct {
+    mark_id: usize,
+    ref_id: usize,
+    opcode: u8,
+    orig_opcode: u8,
+};
+
+fn updateRel32JmpIns(patcher: *Patcher, jmps: []Rel32JmpIns, reserve_size: usize) !void {
+    for (jmps) |jmp_ins| {
+        // TODO: Optimize original cond jump rel32 instructions...
+        if (jmp_ins.opcode == jmp_ins.orig_opcode) continue;
+        const ref = patcher.buffer.estimateReferenceOffsets(jmp_ins.ref_id, reserve_size);
+        const value_offset = ref.value_offset - 1 - (@sizeOf(i32) - @sizeOf(i32)); // -1 for 0x0F
+        // It doesn't account for if all the jump instructions were made rel8 version
+        if (value_offset >= std.math.minInt(i8) and value_offset <= std.math.maxInt(i8)) {
+            const pos = patcher.buffer.getMarkerPos(jmp_ins.mark_id);
+            patcher.buffer.updateReference(jmp_ins.ref_id, @sizeOf(i8), 1);
+
+            const block_id = patcher.buffer.markers.get(jmp_ins.mark_id).pos.block_id;
+            patcher.buffer.blocks.items[block_id].size = 2;
+            //patcher.buffer.getBlockPtrWithin(pos, 6).?.size = 2;
+
+            try patcher.buffer.replaceRange(pos, 6, &bytes(.{ jmp_ins.orig_opcode, 0x00 })); // finalize will update it!
+        }
     }
 }
 
@@ -331,14 +238,17 @@ pub fn fixMovIns(ins: *const cs.Insn, writer: *FixedCodeWriter) void {
 /// <additional instructions/values>(to fix the relative instructions and behave like the original ones)
 /// ```
 pub fn fix(allocator: std.mem.Allocator, handle: cs.Handle, code: []const u8, reserve: usize) !FixedCode {
-    @setRuntimeSafety(false);
-
     var tmp_detail: cs.Detail = undefined;
     var tmp_ins: cs.Insn = undefined;
     tmp_ins.detail = &tmp_detail;
     var iter = cs.disasmIter(handle, code, @intFromPtr(code.ptr), &tmp_ins);
 
-    var writer = try FixedCodeWriter.init(allocator, code, reserve);
+    var patcher = Patcher{ .buffer = .init(allocator, code) };
+    defer patcher.deinit();
+
+    var cond_jmps = std.ArrayList(Rel32JmpIns).init(allocator);
+    defer cond_jmps.deinit();
+
     while (iter.next()) |ins| {
         const detail = ins.detail orelse unreachable;
 
@@ -346,17 +256,18 @@ pub fn fix(allocator: std.mem.Allocator, handle: cs.Handle, code: []const u8, re
         if (!Disassembler.isRipRelativeInstruction(ins, ins_type)) continue;
 
         if (ins_type == .CALL) {
-            fixCallJmpIns(ins, true, &writer);
+            try fixCallJmpIns(ins, true, &patcher);
         } else if (ins_type == .JMP) {
-            fixCallJmpIns(ins, false, &writer);
+            try fixCallJmpIns(ins, false, &patcher);
         } else if (ins_type == .JMP_COND) {
-            fixCondJmpIns(ins, &writer);
+            try cond_jmps.append(try fixCondJmpIns(ins, &patcher));
         } else {
-            fixMovIns(ins, &writer);
+            try fixMovIns(ins, &patcher);
         }
     }
+    try updateRel32JmpIns(&patcher, cond_jmps.items, reserve);
 
-    return writer.finalize();
+    return try patcher.finalize(reserve);
 }
 
 test "jmp/call" {
@@ -377,76 +288,107 @@ test "jmp/call" {
     defer std.testing.allocator.free(res.code);
 
     var read_offset: usize = 0;
-    var ins_size: usize = 0;
-    var jmp_offset: usize = 0;
-    var jmp_addr: usize = 0;
+    // var ins_size: usize = 0;
+    // var jmp_offset: usize = 0;
+    // var jmp_addr: usize = 0;
 
-    //try std.testing.expectEqualSlices(u8, code, res.fixed_code);
-
-    ins_size = 2 + @sizeOf(u32);
+    // try std.testing.expectEqualSlices(u8, code, res.code);
 
     // call 0xfb ; call rel32
-    try std.testing.expectEqualSlices(u8, &[_]u8{ 0xff, 0x15 }, res.code[read_offset .. read_offset + 2]);
-    read_offset += 2;
+    {
+        var extracted_offset1: i32 = undefined;
+        try std.testing.expect(patternMatchBytes(.{
+            0xff, 0x15, &extracted_offset1, // call [rip+imm32]
+        }, res.code[read_offset..]));
+        read_offset += 2 + @sizeOf(i32);
+        const offset1: usize = @intCast(@as(isize, @intCast(read_offset)) + extracted_offset1);
 
-    jmp_offset = @as(*u32, @ptrFromInt(@intFromPtr(res.code[read_offset..].ptr))).* + read_offset + @sizeOf(u32);
-    read_offset += @sizeOf(u32);
-    try std.testing.expectEqual(0x3e + read_offset, jmp_offset);
-
-    jmp_addr = @as(*usize, @ptrFromInt(@intFromPtr(res.code[jmp_offset..].ptr))).*;
-    try std.testing.expectEqual(base + 5 + 0xfb, jmp_addr);
-
+        var addr: usize = undefined;
+        try std.testing.expect(patternMatchBytes(.{&addr}, res.code[@intCast(offset1)..]));
+        try std.testing.expectEqual(base + 5 + 0xfb, addr);
+    }
     // jmp 0x0e ; jmp rel8
-    try std.testing.expectEqualSlices(u8, &[_]u8{ 0xff, 0x25 }, res.code[read_offset .. read_offset + 2]);
-    read_offset += 2;
+    {
+        var extracted_offset1: i32 = undefined;
+        try std.testing.expect(patternMatchBytes(.{
+            0xff, 0x25, &extracted_offset1, // jmp [rip+imm32]
+        }, res.code[read_offset..]));
+        read_offset += 2 + @sizeOf(i32);
+        const offset1: usize = @intCast(@as(isize, @intCast(read_offset)) + extracted_offset1);
 
-    jmp_offset = @as(*u32, @ptrFromInt(@intFromPtr(res.code[8..].ptr))).* + read_offset + @sizeOf(u32);
-    read_offset += @sizeOf(u32);
-    try std.testing.expectEqual(0x40 + read_offset, jmp_offset);
-
-    jmp_addr = @as(*usize, @ptrFromInt(@intFromPtr(res.code[jmp_offset..].ptr))).*;
-    try std.testing.expectEqual(base + 7 + 0x0e, jmp_addr);
-
+        var addr: usize = undefined;
+        try std.testing.expect(patternMatchBytes(.{&addr}, res.code[@intCast(offset1)..]));
+        try std.testing.expectEqual(base + 7 + 0x0e, addr);
+    }
     // jmp 0xfb ; jmp rel32
-    jmp_addr = @as(*usize, @ptrFromInt(@intFromPtr(res.code[jmp_offset + @sizeOf(usize) ..].ptr))).*;
-    try std.testing.expectEqual(base + 12 + 0xfb, jmp_addr);
-    read_offset += ins_size;
+    {
+        var extracted_offset1: i32 = undefined;
+        try std.testing.expect(patternMatchBytes(.{
+            0xff, 0x25, &extracted_offset1, // jmp [rip+imm32]
+        }, res.code[read_offset..]));
+        read_offset += 2 + @sizeOf(i32);
+        const offset1: usize = @intCast(@as(isize, @intCast(read_offset)) + extracted_offset1);
 
-    ins_size = 25;
+        var addr: usize = undefined;
+        try std.testing.expect(patternMatchBytes(.{&addr}, res.code[@intCast(offset1)..]));
+        try std.testing.expectEqual(base + 12 + 0xfb, addr);
+    }
+    var reused_offset: usize = undefined;
     // call [rip+0x10] ; call [rip+rel32]
-    try std.testing.expectEqualSlices(u8, &[_]u8{
-        0x50, // push rax
-        0x48, 0x8b, 0x05, // mov rax, [rip + {}]
-    }, res.code[read_offset .. read_offset + 4]);
-    read_offset += 4;
+    {
+        var extracted_offset1: i32 = undefined;
+        var extracted_offset2: i32 = undefined;
+        var extracted_offset3: i32 = undefined;
+        try std.testing.expect(patternMatchBytes(.{
+            0x50, // push rax
+            0x48, 0x8b, 0x05, &extracted_offset1, // mov rax, [rip + {}]
+            0x48, 0x8B, 0x00, // mov rax, [rax]
+            0x48, 0x89, 0x05, &extracted_offset2, // mov [rip+{}], rax
+            0x58, // pop rax
+            0xFF, 0x15, &extracted_offset3, // call [rip+{}]
+        }, res.code[read_offset..]));
+        read_offset += 4 + @sizeOf(i32);
+        const offset1: usize = @intCast(@as(isize, @intCast(read_offset)) + extracted_offset1);
+        read_offset += 6 + @sizeOf(i32);
+        const offset2: usize = @intCast(@as(isize, @intCast(read_offset)) + extracted_offset2);
+        read_offset += 3 + @sizeOf(i32);
+        const offset3: usize = @intCast(@as(isize, @intCast(read_offset)) + extracted_offset3);
 
-    jmp_offset = @as(*u32, @ptrFromInt(@intFromPtr(res.code[read_offset..].ptr))).* + read_offset + @sizeOf(u32);
-    read_offset += @sizeOf(u32);
-    try std.testing.expectEqual(0x42 + read_offset, jmp_offset);
+        try std.testing.expectEqual(offset2, offset3);
 
-    jmp_addr = @as(*usize, @ptrFromInt(@intFromPtr(res.code[jmp_offset..].ptr))).*;
-    try std.testing.expectEqual(base + 18 + 0x10, jmp_addr);
-    read_offset += ins_size - 4 - @sizeOf(u32);
-    try std.testing.expectEqual(0x15, res.code[read_offset - @sizeOf(u32) - 1]);
-    const last_reused_offset = @as(*u32, @ptrFromInt(@intFromPtr(res.code[read_offset - @sizeOf(u32) ..].ptr))).* + read_offset;
+        reused_offset = offset3;
 
+        var addr: usize = undefined;
+        try std.testing.expect(patternMatchBytes(.{&addr}, res.code[@intCast(offset1)..]));
+        try std.testing.expectEqual(base + 18 + 0x10, addr);
+    }
     // jmp [rip+0x10] ; jmp [rip+rel32]
-    try std.testing.expectEqualSlices(u8, &[_]u8{
-        0x50, // push rax
-        0x48, 0x8b, 0x05, // mov rax, [rip + {}]
-    }, res.code[read_offset .. read_offset + 4]);
-    read_offset += 4;
+    {
+        var extracted_offset1: i32 = undefined;
+        var extracted_offset2: i32 = undefined;
+        var extracted_offset3: i32 = undefined;
+        try std.testing.expect(patternMatchBytes(.{
+            0x50, // push rax
+            0x48, 0x8b, 0x05, &extracted_offset1, // mov rax, [rip + {}]
+            0x48, 0x8B, 0x00, // mov rax, [rax]
+            0x48, 0x89, 0x05, &extracted_offset2, // mov [rip+{}], rax
+            0x58, // pop rax
+            0xFF, 0x25, &extracted_offset3, // jmp [rip+{}]
+        }, res.code[read_offset..]));
+        read_offset += 4 + @sizeOf(i32);
+        const offset1: usize = @intCast(@as(isize, @intCast(read_offset)) + extracted_offset1);
+        read_offset += 6 + @sizeOf(i32);
+        const offset2: usize = @intCast(@as(isize, @intCast(read_offset)) + extracted_offset2);
+        read_offset += 3 + @sizeOf(i32);
+        const offset3: usize = @intCast(@as(isize, @intCast(read_offset)) + extracted_offset3);
 
-    jmp_offset = @as(*u32, @ptrFromInt(@intFromPtr(res.code[read_offset..].ptr))).* + read_offset + @sizeOf(u32);
-    read_offset += @sizeOf(u32);
-    try std.testing.expectEqual(0x39 + read_offset, jmp_offset);
+        try std.testing.expectEqual(offset2, offset3);
+        try std.testing.expectEqual(reused_offset, offset2);
 
-    jmp_addr = @as(*usize, @ptrFromInt(@intFromPtr(res.code[jmp_offset..].ptr))).*;
-    try std.testing.expectEqual(base + 24 + 0x10, jmp_addr);
-    read_offset += ins_size - 4 - @sizeOf(u32);
-    try std.testing.expectEqual(0x25, res.code[read_offset - @sizeOf(u32) - 1]);
-    const reused_offset = @as(*u32, @ptrFromInt(@intFromPtr(res.code[read_offset - @sizeOf(u32) ..].ptr))).* + read_offset;
-    try std.testing.expectEqual(last_reused_offset, reused_offset);
+        var addr: usize = undefined;
+        try std.testing.expect(patternMatchBytes(.{&addr}, res.code[@intCast(offset1)..]));
+        try std.testing.expectEqual(base + 24 + 0x10, addr);
+    }
 }
 
 test "cond jmp" {
@@ -463,6 +405,8 @@ test "cond jmp" {
 
     const res = try fix(std.testing.allocator, disasm.handle, code, 0);
     defer std.testing.allocator.free(res.code);
+
+    // try std.testing.expectEqualSlices(u8, code, res.code);
 
     // Helper function to extract jump offset and target address
     const extract_jump_info = struct {

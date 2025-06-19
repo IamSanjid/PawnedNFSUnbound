@@ -41,6 +41,9 @@
             // .hash = "capstone_bindings_zig-5.0.1-Z6g-FhUiAQAFEIobApk3NXmH7OmsKRvI-jJgSAYNzn72",
             .path = "../../../../GitHub/IamSanjid/capstone_bindings_zig",
         },
+        .asm_patch_buffer = .{
+            .path = "../asm_patch_buffer",
+        },
     },
 
     // Specifies the set of files and directories that are included in this package.

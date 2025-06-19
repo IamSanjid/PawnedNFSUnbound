@@ -113,6 +113,12 @@ pub fn build(b: *std.Build) !void {
     });
     const capstone_z = capstone_bindings_zig.module("capstone-bindings-zig");
 
+    const asm_patch_buffer_dep = b.dependency("asm_patch_buffer", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const asm_patch_buffer = asm_patch_buffer_dep.module("asm_patch_buffer");
+
     const disasm = b.createModule(.{
         .root_source_file = b.path("src/disasm/disasm.zig"),
         .target = target,
@@ -127,6 +133,7 @@ pub fn build(b: *std.Build) !void {
     });
     binary_analysis.addImport("disasm", disasm);
     binary_analysis.addImport("windows_extra", windows_extra);
+    binary_analysis.addImport("asm_patch_buffer", asm_patch_buffer);
 
     const pawned = b.addSharedLibrary(.{
         .name = "PawnedNFSUnbound",
