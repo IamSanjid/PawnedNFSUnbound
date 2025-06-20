@@ -1,3 +1,5 @@
+// Just a test "hook"
+
 const builtin = @import("builtin");
 const std = @import("std");
 const ba = @import("binary_analysis");

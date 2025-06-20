@@ -140,6 +140,7 @@ pub fn Detour(comptime arch: std.Target.Cpu.Arch, comptime os: std.Target.Os.Tag
                 // kind of like a jmp table
                 _ = writeJmpInstruction(jmp_entry.detour_jmp, detour, absolute_jmp_size);
                 _ = writeJmpInstruction(jmp_entry.next_jmp, @intFromPtr(ret_trampoline.ptr), absolute_jmp_size);
+                jmp_entry.flush();
 
                 // check if original code is ending with jmp or ret instruction
                 const ending_ins = detectFuncEnd(self.disassmbler.native, found_region);
@@ -150,7 +151,7 @@ pub fn Detour(comptime arch: std.Target.Cpu.Arch, comptime os: std.Target.Os.Tag
                 } else {
                     // if there is no ending instruction, we need to write a jmp back to the original code
                     const ret_trampoline_jmp_buf: [*]u8 = @ptrFromInt(@intFromPtr(ret_trampoline.ptr) + jmp_back_write_offset);
-                    _ = writeJmpInstruction(ret_trampoline_jmp_buf[0..safe_buf_size], jmp_back_original, null);
+                    _ = try emitJmp(@intFromPtr(ret_trampoline_jmp_buf[0..safe_buf_size].ptr), jmp_back_original, null);
                 }
 
                 var jmp_table = JumpTable.init(self.allocator);
@@ -194,6 +195,7 @@ pub fn Detour(comptime arch: std.Target.Cpu.Arch, comptime os: std.Target.Os.Tag
                 // **UNSAFE** We're sure the previously allocated trampoline regions have enough space to store *absolute_jmp_size* bytes
                 _ = writeJmpInstruction(new_jmp_entry.detour_jmp, detour, absolute_jmp_size);
                 _ = writeJmpInstruction(last_jmp_entry.next_jmp, @intFromPtr(new_jmp_entry.detour_jmp.ptr), absolute_jmp_size);
+                last_jmp_entry.flush();
                 new_jmp_entry.flush();
 
                 return .{

@@ -104,12 +104,27 @@ pub fn isRipRelativeInstruction(insn: *const cs.Insn, ins_type: InstructionType)
         return false;
     }
 
-    if (ins_type == .JMP or ins_type == .JMP_COND or ins_type == .CALL) {
+    if (ins_type == .JMP_COND) {
         return true;
     }
 
     const detail = insn.detail orelse return false;
     const x86 = detail.arch.x86;
+
+    if (ins_type == .JMP or ins_type == .CALL) {
+        for (0..x86.op_count) |i| {
+            const op = x86.operands[i];
+            if (op.type == .MEM) {
+                if (op.inst.mem.base == .RIP or op.inst.mem.base == .EIP) {
+                    return true;
+                } else {
+                    // accessing other registers
+                    return false;
+                }
+            }
+        }
+        return findDisplacement(insn) != null;
+    }
 
     for (0..x86.op_count) |i| {
         const op = x86.operands[i];

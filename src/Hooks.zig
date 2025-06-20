@@ -54,16 +54,20 @@ fn getAddressForHook(module_name: []const u8, hook_name: []const u8) ?usize {
 pub fn init() !void {
     detour = try ba.Detour.init(std.heap.c_allocator);
 
-    // Auto-Generated!!!
-    //try @import("hooks/CopyRaceVehicleConfig.zig").init(&detour.?);
+    try @import("hooks/AllRaceAvailable.zig").init(&detour.?);
 
     // Auto-Generated!!!
-    try @import("hooks/DoSomething.zig").init(&detour.?);
+    try @import("hooks/CopyRaceVehicleConfig.zig").init(&detour.?);
+
+    // Auto-Generated!!!
+    // try @import("hooks/DoSomething.zig").init(&detour.?);
 }
 
 pub fn deinit() void {
     // Auto-Generated!!!
-    @import("hooks/DoSomething.zig").deinit();
+    // @import("hooks/DoSomething.zig").deinit();
+    @import("hooks/AllRaceAvailable.zig").deinit();
+    @import("hooks/CopyRaceVehicleConfig.zig").deinit();
     var detour_ctx = detour orelse return;
     detour_ctx.deinit();
     detour = null;

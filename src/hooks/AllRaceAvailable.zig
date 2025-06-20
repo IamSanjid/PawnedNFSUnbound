@@ -1,4 +1,5 @@
 const std = @import("std");
+const ba = @import("binary_analysis");
 
 const GeneralRegisters = struct {
     rbx: usize = 0,
@@ -340,7 +341,36 @@ pub fn hookFn() callconv(.naked) noreturn {
     );
 }
 
+pub fn init(detour: *ba.Detour) !void {
+    const allocator = std.heap.c_allocator;
+    var scanner = ba.aob.Scanner.init(allocator);
+    defer scanner.deinit();
+
+    const module = (try ba.windows.getModuleInfo(allocator, base_module)) orelse return error.ModuleNotFound;
+    defer module.deinit(allocator);
+
+    const hook_target = module.start + 0x2313424;
+    const hook_fn_start = @intFromPtr(&hookFn);
+    const attached_info = try detour.attach(hook_target, hook_fn_start);
+
+    try scanner.search_ranges.append(.{
+        .start = hook_fn_start,
+        .end = hook_fn_start + 512,
+    });
+
+    var search_ctx = scanner.newSearch();
+    defer search_ctx.deinit();
+    try search_ctx.searchBytes(&hook_fn_end_signature, .{ .find_one_per_range = true });
+    const hook_fn_end = search_ctx.result.getLast().start;
+
+    _ = try ba.Detour.emitJmp(hook_fn_end, attached_info.trampoline, null);
+}
+
+pub fn deinit() void {}
+
+pub const hook_fn_end_signature = [_]u8{ 0x90, 0xCC } ** 8;
 pub const name = "AllRaceAvailable";
+pub const base_module = "NeedForSpeedUnbound.exe";
 
 const AssetMetadata = extern struct {
     padding: [0x30]u8,

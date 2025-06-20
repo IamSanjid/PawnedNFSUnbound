@@ -817,3 +817,16 @@ test "call [rdx]" {
         0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
     }, res.code);
 }
+
+test "call [rdx + 10]" {
+    const code: []const u8 = &.{
+        0xFF, 0x52, 0x10, // call [rdx+10]
+    };
+    var disasm = try Disassembler.create(.{});
+    defer disasm.deinit();
+
+    const res = try fix(std.testing.allocator, disasm.handle, code, 0);
+    defer std.testing.allocator.free(res.code);
+
+    try std.testing.expectEqualSlices(u8, code, res.code);
+}
