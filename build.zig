@@ -147,16 +147,16 @@ pub fn build(b: *std.Build) !void {
     pawned.linkLibC();
 
     // linking Detours...
-    if (!use_prebuilt_detour) {
-        const detours = try addStaticDetours(b, target, optimize);
+    // if (!use_prebuilt_detour) {
+    //     const detours = try addStaticDetours(b, target, optimize);
 
-        pawned.linkLibrary(detours);
-        pawned.addIncludePath(b.path("Detours"));
-    } else {
-        pawned.addLibraryPath(getDetoursLibPath(b, optimize));
-        pawned.linkSystemLibrary("detours");
-        pawned.addIncludePath(b.path("Detours-Built/include"));
-    }
+    //     pawned.linkLibrary(detours);
+    //     pawned.addIncludePath(b.path("Detours"));
+    // } else {
+    //     pawned.addLibraryPath(getDetoursLibPath(b, optimize));
+    //     pawned.linkSystemLibrary("detours");
+    //     pawned.addIncludePath(b.path("Detours-Built/include"));
+    // }
     // pawned.addWin32ResourceFile(.{ .file = b.path("res/resource.rc") });
 
     b.installArtifact(pawned);

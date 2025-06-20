@@ -3,11 +3,11 @@ const std = @import("std");
 const windows = std.os.windows;
 const windows_extra = @import("windows_extra");
 
-const c = @cImport({
-    @cDefine("WIN32_LEAN_AND_MEAN", "1");
-    @cInclude("windows.h");
-    @cInclude("detours.h");
-});
+// const c = @cImport({
+//     @cDefine("WIN32_LEAN_AND_MEAN", "1");
+//     @cInclude("windows.h");
+//     @cInclude("detours.h");
+// });
 
 const WinConsole = @import("WinConsole.zig");
 const Hooks = @import("Hooks.zig");
@@ -41,9 +41,9 @@ export fn onUserInput(input: [*:0]const u8) callconv(.winapi) void {
 pub fn DllMain(hinst: windows.HINSTANCE, dw_reason: windows.DWORD, _: windows.LPVOID) callconv(.winapi) windows.BOOL {
     const hmodule: windows.HMODULE = @ptrCast(hinst);
 
-    if (c.DetourIsHelperProcess() != 0) {
-        return windows.TRUE;
-    }
+    // if (c.DetourIsHelperProcess() != 0) {
+    //     return windows.TRUE;
+    // }
 
     switch (dw_reason) {
         windows_extra.DLL_PROCESS_ATTACH => {
@@ -63,20 +63,20 @@ pub fn DllMain(hinst: windows.HINSTANCE, dw_reason: windows.DWORD, _: windows.LP
             // };
             // th.detach();
 
-            _ = c.DetourRestoreAfterWith();
+            //_ = c.DetourRestoreAfterWith();
             _ = windows_extra.DisableThreadLibraryCalls(hmodule);
-            _ = c.DetourTransactionBegin();
-            _ = c.DetourUpdateThread(windows.GetCurrentThread());
+            //_ = c.DetourTransactionBegin();
+            //_ = c.DetourUpdateThread(windows.GetCurrentThread());
             Hooks.init() catch |err| {
                 std.debug.print("Failed to init hooks: {}\n", .{err});
             };
-            _ = c.DetourTransactionCommit();
+            //_ = c.DetourTransactionCommit();
         },
         windows_extra.DLL_PROCESS_DETACH => {
-            _ = c.DetourTransactionBegin();
-            _ = c.DetourUpdateThread(windows.GetCurrentThread());
+            //_ = c.DetourTransactionBegin();
+            //_ = c.DetourUpdateThread(windows.GetCurrentThread());
             Hooks.deinit();
-            _ = c.DetourTransactionCommit();
+            //_ = c.DetourTransactionCommit();
 
             //if (builtin.mode == .Debug) {
             // WinConsole.deinit();

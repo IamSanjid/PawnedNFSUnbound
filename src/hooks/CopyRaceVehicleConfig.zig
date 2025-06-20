@@ -322,15 +322,15 @@ pub fn init(detour: *ba.Detour) !void {
     defer module.deinit(allocator);
 
     // sets some function? offset/values? by following some keys, calls once everytime bundles are loaded/unloaded :)
-    try hookToOffset(detour, module.start + 0x6EE00B, @intFromPtr(&startConfigKeySetHookFn));
+    try hookTo(detour, module.start + 0x6EE00B, @intFromPtr(&startConfigKeySetHookFn));
     // on resource constructor call,  resource->vtable[0](resource), vtable's first function
-    try hookToOffset(detour, module.start + 0x25A1737, @intFromPtr(&resourceConstructHookFn));
+    try hookTo(detour, module.start + 0x25A1737, @intFromPtr(&resourceConstructHookFn));
     // NeedForSpeedUnbound.exe+1368FDA - 48 8B 10              - mov rdx,[rax]
     // NeedForSpeedUnbound.exe+137A356 - 48 8B 10              - mov rdx,[rax]
-    try hookToOffset(detour, module.start + 0x137A356, @intFromPtr(&resourceItemDataHookFn));
+    try hookTo(detour, module.start + 0x137A356, @intFromPtr(&resourceItemDataHookFn));
 }
 
-fn hookToOffset(detour: *ba.Detour, hook_target: usize, hook_fn_start: usize) !void {
+fn hookTo(detour: *ba.Detour, hook_target: usize, hook_fn_start: usize) !void {
     const attached_info = try detour.attach(hook_target, hook_fn_start);
 
     try scanner.search_ranges.append(.{
