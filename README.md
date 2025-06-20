@@ -35,3 +35,8 @@ The game crashes after I exit a mode.
 Why all of these issues? I am too lazy to properly find a function where I can hook to detect Loading/Unloading/Exiting etc state. So many of the invalid state still remains when exiting a mode.
 
 So basically didn't wanna do hardcore reverse engineering.
+
+# Generate Hooks templates
+`zig build hook -Dhook-name=<name> -Dhook-offset=<0x hex>`
+
+this command will generate some sort of template in the `src/hooks` directory the offset is relative to the main module `NeedForSpeedUnbound.exe` if you want to change it through command you can pass `-Dhook-base-module=<name>` command arg.
