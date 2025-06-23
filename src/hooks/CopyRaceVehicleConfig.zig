@@ -219,12 +219,12 @@ const stack_state_saver = struct {
     , .{});
 };
 
-fn startConfigKeySetHookFn() callconv(.naked) noreturn {
+fn inputActionMapsDataHookFn() callconv(.naked) noreturn {
     @setRuntimeSafety(false);
 
     asm volatile (stack_state_saver.save_call_hook_template
         :
-        : [onHook] "X" (&onStartConfigKey),
+        : [onHook] "X" (&onInputActionMapsData),
         : "memory", "cc"
     );
 
@@ -318,11 +318,11 @@ var scanner = ba.aob.Scanner.init(allocator);
 pub fn init(detour: *ba.Detour) !void {
     _ = arena.reset(.free_all);
 
-    const module = (try ba.windows.getModuleInfo(allocator, base_module)) orelse return error.ModuleNotFound;
+    const module = try ba.windows.getModuleInfo(allocator, base_module);
     defer module.deinit(allocator);
 
-    // sets some function? offset/values? by following some keys, calls once everytime bundles are loaded/unloaded :)
-    try hookTo(detour, module.start + 0x6EE00B, @intFromPtr(&startConfigKeySetHookFn));
+    // NeedForSpeedUnbound.exe+1ADBBE0 - 48 8B 13              - mov rdx,[rbx]
+    try hookTo(detour, module.start + 0x1ADBBE0, @intFromPtr(&inputActionMapsDataHookFn));
     // on resource constructor call,  resource->vtable[0](resource), vtable's first function
     try hookTo(detour, module.start + 0x25A1737, @intFromPtr(&resourceConstructHookFn));
     // NeedForSpeedUnbound.exe+1368FDA - 48 8B 10              - mov rdx,[rax]
@@ -1128,7 +1128,10 @@ var performance_modifications = [_]PerformanceModification{
     }) },
 };
 
-const Items1Upgrade = struct { usize, Configable(RaceVehiclePerformanceUpgradeData) };
+//
+// Example of how List(T) can be used with ConfigableAction
+//
+// const Items1Upgrade = struct { usize, Configable(RaceVehiclePerformanceUpgradeData) };
 // var items1_upgrades = [_]Items1Upgrade{
 //     .{ 0, fullCopyConfigable(RaceVehiclePerformanceUpgradeData, .{
 //         .performance_modifier_data = ConfigableAction(RaceVehiclePerformanceModifierData){
@@ -1140,70 +1143,13 @@ const Items1Upgrade = struct { usize, Configable(RaceVehiclePerformanceUpgradeDa
 //         },
 //     }) },
 // };
-var items1_upgrades = [_]Items1Upgrade{
-    .{ 0, fullCopyConfigable(RaceVehiclePerformanceUpgradeData, .{
-        .performance_modifier_data = ConfigableAction(RaceVehiclePerformanceModifierData){
-            .deep_copy = fullCopyConfigable(RaceVehiclePerformanceModifierData, null),
-        },
-    }) },
-};
-var rv_config_copies = [_]CopyState(RaceVehicleConfigData){
-    .{
-        .from_ident = "vehicles/player/car_audi_r8v10_2019/car_audi_r8v10_2019_racevehicleconfig",
-        .to_ident = "vehicles/player/car_bmw_m3e46_2003/car_bmw_m3e46gtrrazernfsmw_2003_racevehicleconfig",
-        .config = fullCopyConfigable(RaceVehicleConfigData, .{
-            .chassis = ConfigableAction(RaceVehicleChassisConfigData){
-                .deep_copy = fullCopyConfigable(RaceVehicleChassisConfigData, .{
-                    .track_width_front = ConfigableAction(f32).skip,
-                    .track_width_rear = ConfigableAction(f32).skip,
-                    .wheel_base = ConfigableAction(f32).skip,
-                    .front_axle = ConfigableAction(f32).skip,
-                    // .mass = ConfigableAction(f32).copy,
-                }),
-            },
-        }),
-        // .config = .{
-        //     .item1_upgrades = .{
-        //         .deep_copy = &items1_upgrades,
-        //     },
-        //     .transmission = .copy,
-        //     .engine = .copy,
-        //     // .chassis = .copy,
-        //     // .engine = .{
-        //     //     .deep_copy = .{
-        //     //         .max_rpm = .{ .replace = 7800 },
-        //     //         .red_line = .{ .replace = 7550 },
-        //     //         .engine_rev_sequence_length = .copy,
-        //     //         .ignition_sequence_length = .copy,
-        //     //         .perfect_start_range_shift = .copy,
-        //     //         .rev_limiter_time = .copy,
-        //     //         .engine_rev_full_throttle_duration = .copy,
-        //     //     },
-        //     // },
-        //     .chassis = .{
-        //         .deep_copy = fullCopyConfigable(RaceVehicleChassisConfigData, .{
-        //             .front_axle = ConfigableAction(f32).skip,
-        //             .track_width_front = ConfigableAction(f32).skip,
-        //             .track_width_rear = ConfigableAction(f32).skip,
-        //             .wheel_base = ConfigableAction(f32).skip,
-        //             // .mass = ConfigableAction(f32).copy,
-        //         }),
-        //     },
-        //     .stock_top_speed = ConfigableAction(f32){ .replace = 190 },
-        // },
-    },
-};
-
-var ed_copies = [_]CopyState(RaceVehicleEngineData){
-    .{
-        .from_ident = "Vehicles/Tuning/EngineData/Car_Ford_MustangBoss302_1969_EngineData",
-        .to_ident = "Vehicles/Tuning/EngineData/Car_BMW_M3E46GTRRazerNFSMW_2003_EngineData",
-        .config = .{
-            .engine_config = .copy,
-            .engine_upgrades = .copy,
-        },
-    },
-};
+// var items1_upgrades = [_]Items1Upgrade{
+//     .{ 0, fullCopyConfigable(RaceVehiclePerformanceUpgradeData, .{
+//         .performance_modifier_data = ConfigableAction(RaceVehiclePerformanceModifierData){
+//             .deep_copy = fullCopyConfigable(RaceVehiclePerformanceModifierData, null),
+//         },
+//     }) },
+// };
 
 const CopyRaceVechicle = struct {
     config_copy: CopyState(RaceVehicleConfigData),
@@ -1302,6 +1248,7 @@ const CopyRaceVechicle = struct {
                         }
                         if (j < from_scope_ids.len) {
                             const amount_left = from_scope_ids.len - j;
+                            // TODO: After proper resetting of hook is present.
                             // if (sorted_scope_list.dupeWithExtra(amount_left)) |new_scope_list| {
                             //     const new_scope = new_scope_list.span();
                             //     var start_idx: usize = new_scope.len - amount_left;
@@ -1336,7 +1283,18 @@ const CopyRaceVechicle = struct {
     }
 };
 
-var rv_item_copies = [_]CopyRaceVechicle{
+var engine_data_copies = [_]CopyState(RaceVehicleEngineData){
+    .{
+        .from_ident = "Vehicles/Tuning/EngineData/Car_Ford_MustangBoss302_1969_EngineData",
+        .to_ident = "Vehicles/Tuning/EngineData/Car_BMW_M3E46GTRRazerNFSMW_2003_EngineData",
+        .config = .{
+            .engine_config = .copy,
+            .engine_upgrades = .copy,
+        },
+    },
+};
+
+var race_vehicle_copies = [_]CopyRaceVechicle{
     .{
         .config_copy = .{
             .from_ident = "vehicles/player/car_audi_r8v10_2019/car_audi_r8v10_2019_racevehicleconfig",
@@ -1370,30 +1328,39 @@ var skip_engine_items = [_]u32{
 
 var mutex = std.Thread.Mutex{};
 
-fn onStartConfigKey(regs: *GeneralRegisters) callconv(.c) void {
+fn onInputActionMapsData(regs: *GeneralRegisters) callconv(.c) void {
     _ = regs;
 
-    // mutex.lock();
-    // defer mutex.unlock();
+    mutex.lock();
+    defer mutex.unlock();
 
-    // for (&es_copies) |*copy| {
-    //     copy.reset();
-    // }
+    std.debug.print("onInputActionMapsData called, resetting!\n", .{});
 
-    // for (&ed_copies) |*copy| {
-    //     copy.reset();
-    // }
+    for (&engine_data_copies) |*copy| {
+        copy.reset();
+    }
 
-    // for (&rv_item_copies) |*copy| {
-    //     copy.reset();
-    // }
+    for (&race_vehicle_copies) |*copy| {
+        copy.reset();
+    }
 
-    // engine_items.clearAndFree();
-    //_ = arena.reset(.free_all);
+    engine_items.clearAndFree();
+
+    for (&engine_structure_copies) |*copy| {
+        copy.reset();
+    }
+
+    for (&frame_copies) |*copy| {
+        copy.reset();
+    }
+
+    for (&drive_train_copies) |*copy| {
+        copy.reset();
+    }
 }
 
 fn onResourceConstruct(regs: *GeneralRegisters) callconv(.c) void {
-    //std.debug.print("rdx: {}\n", .{regs.rdi});
+    // std.debug.print("rdx: {}\n", .{regs.rdi});
     // const my_guid = [_]u8{ 0x4B, 0x95, 0x36, 0xB1, 0x39, 0xF4, 0x55, 0x45, 0xBA, 0x16, 0x87, 0x65, 0x85, 0x1C, 0x42, 0x0D };
     // if (regs.rdi == 0) return;
     // const guid: [*]u8 = @ptrFromInt(regs.rdi - 0x10);
@@ -1402,13 +1369,13 @@ fn onResourceConstruct(regs: *GeneralRegisters) callconv(.c) void {
     mutex.lock();
     defer mutex.unlock();
 
-    for (&ed_copies) |*copy| {
+    for (&engine_data_copies) |*copy| {
         const found = copy.populateHashSet(@ptrFromInt(regs.rsi));
         _ = copy.performCopy();
         if (found) return;
     }
 
-    for (&rv_item_copies) |*copy| {
+    for (&race_vehicle_copies) |*copy| {
         const found = copy.config_copy.populateHashSet(@ptrFromInt(regs.rsi)) or
             copy.item_copy.populateHashSet(@ptrFromInt(regs.rsi));
         copy.performConfigCopy();
@@ -1428,16 +1395,16 @@ fn onResourceConstruct(regs: *GeneralRegisters) callconv(.c) void {
         // At this point we probably don't have enough information to distinguish between "engine structure" items,
         if (std.ascii.startsWithIgnoreCase(es_item_asset_name, "items/performanceitems/engines/")) {
             engine_items.put(es_item.id, es_item) catch return;
-            for (&rv_item_copies) |*copy| {
+            for (&race_vehicle_copies) |*copy| {
                 copy.performItemCopy(engine_items, &skip_engine_items);
             }
         }
     }
 }
 
-var mutex2 = std.Thread.Mutex{};
+var res_item_data_mutex = std.Thread.Mutex{};
 
-var es_copies = [_]CopyState(EngineStructureItemData){
+var engine_structure_copies = [_]CopyState(EngineStructureItemData){
     .{
         .from_ident = "items/performanceitems/engines/car_ford_mustangboss302_1969_enginestructure",
         .to_ident = "items/performanceitems/engines/car_bmw_m3e46gtr_2003_razernfsmw_enginestructure",
@@ -1451,7 +1418,7 @@ var es_copies = [_]CopyState(EngineStructureItemData){
     },
 };
 
-var fd_copies = [_]CopyState(FrameItemData){
+var frame_copies = [_]CopyState(FrameItemData){
     .{
         .from_ident = "items/performanceitems/frames/car_audi_r8v10_2019_frame",
         .to_ident = "items/performanceitems/frames/car_bmw_m3e46gtr_2003_razernfsmw_2003_frame",
@@ -1463,7 +1430,7 @@ var fd_copies = [_]CopyState(FrameItemData){
     },
 };
 
-var dt_copies = [_]CopyState(DriveTrainItemData){
+var drive_train_copies = [_]CopyState(DriveTrainItemData){
     .{
         .from_ident = "items/performanceitems/drivetrains/car_audi_r8v10_2019_drivetrain",
         .to_ident = "items/performanceitems/drivetrains/car_bmw_m3e46gtr_2003_razernfsmw_drivetrain",
@@ -1476,22 +1443,22 @@ var dt_copies = [_]CopyState(DriveTrainItemData){
 };
 
 fn onResourceItemData(regs: *GeneralRegisters) callconv(.c) void {
-    mutex2.lock();
-    defer mutex2.unlock();
+    mutex.lock();
+    defer mutex.unlock();
 
-    for (&es_copies) |*copy| {
+    for (&engine_structure_copies) |*copy| {
         const found = copy.populateHashSet(@ptrFromInt(regs.rax));
         _ = copy.performCopy();
         if (found) return;
     }
 
-    for (&fd_copies) |*copy| {
+    for (&frame_copies) |*copy| {
         const found = copy.populateHashSet(@ptrFromInt(regs.rax));
         _ = copy.performCopy();
         if (found) return;
     }
 
-    for (&dt_copies) |*copy| {
+    for (&drive_train_copies) |*copy| {
         const found = copy.populateHashSet(@ptrFromInt(regs.rax));
         _ = copy.performCopy();
         if (found) return;

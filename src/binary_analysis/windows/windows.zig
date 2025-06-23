@@ -3,6 +3,7 @@ const windows = std.os.windows;
 const windows_extra = @import("windows_extra");
 
 pub const x86_64 = @import("x86_64/x86_64.zig");
+pub const ThreadFreezer = @import("ThreadFreezer.zig");
 
 pub inline fn clearInstructionCache(addr: []u8) void {
     const address_ptr: windows.LPVOID = @ptrCast(addr.ptr);
@@ -36,14 +37,20 @@ pub const ModuleInfo = struct {
     }
 };
 
-pub fn getModuleInfo(allocator: std.mem.Allocator, module_name: []const u8) !?ModuleInfo {
-    const module_name_w = std.unicode.utf8ToUtf16LeAllocZ(allocator, module_name) catch return null;
+pub fn getModuleInfo(allocator: std.mem.Allocator, module_name: []const u8) !ModuleInfo {
+    const module_name_w = try std.unicode.utf8ToUtf16LeAllocZ(allocator, module_name);
     defer allocator.free(module_name_w);
 
-    const module = windows.kernel32.GetModuleHandleW(module_name_w) orelse return null;
+    const module = windows.kernel32.GetModuleHandleW(module_name_w) orelse return error.ModuleHandleQueryFailed;
 
     var mod_info: windows.MODULEINFO = undefined;
-    if (windows_extra.GetModuleInformation(windows.GetCurrentProcess(), module, &mod_info, @sizeOf(windows.MODULEINFO)) == windows.FALSE) return null;
+    if (windows_extra.GetModuleInformation(
+        windows.GetCurrentProcess(),
+        module,
+        &mod_info,
+        @sizeOf(windows.MODULEINFO),
+    ) == windows.FALSE) return error.ModuleInfoQueryFailed;
+
     return .{
         .name = try allocator.dupe(u8, module_name),
         .start = @intFromPtr(module),

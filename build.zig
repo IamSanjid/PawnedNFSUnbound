@@ -1,70 +1,6 @@
 const std = @import("std");
 
-fn addDetourSourceFiles(lib: *std.Build.Step.Compile, detours_src_dir: std.Build.LazyPath, optimize: std.builtin.OptimizeMode) !void {
-    const exclude_files = [_][]const u8{
-        "uimports.cpp",
-    };
-
-    const b = lib.step.owner;
-    const path = detours_src_dir.getPath3(b, &lib.step);
-    var dir = try path.openDir("", .{ .iterate = true });
-    var dir_iter = dir.iterate();
-    defer dir.close();
-
-    outer_loop: while (try dir_iter.next()) |entry| {
-        if (entry.kind != .file) continue;
-        if (!std.ascii.endsWithIgnoreCase(entry.name, ".cpp")) continue;
-        for (exclude_files) |exclude_file| {
-            if (std.ascii.eqlIgnoreCase(entry.name, exclude_file)) continue :outer_loop;
-        }
-
-        const source_file_path = try detours_src_dir.join(b.allocator, entry.name);
-        const deotour_debug_flag = if (optimize == .Debug) "-DDETOUR_DEBUG=1 -D_DEBUG" else "-DDETOUR_DEBUG=0";
-        lib.addCSourceFile(.{
-            .file = source_file_path,
-            .language = null,
-            .flags = &.{
-                "-DWIN32_LEAN_AND_MEAN",
-                "-D_WIN32_WINNT=0x501",
-                "-fno-sanitize=undefined", // TODO: Fix the undefined behaviour sanitizer issue?
-                deotour_debug_flag,
-            },
-        });
-    }
-}
-
-fn addStaticDetours(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) !*std.Build.Step.Compile {
-    const lib = b.addStaticLibrary(.{
-        .name = "detours",
-        .target = target,
-        .optimize = optimize,
-    });
-
-    try addDetourSourceFiles(lib, b.path("Detours"), optimize);
-
-    lib.linkLibC();
-    if (target.result.abi != .msvc) {
-        lib.linkLibCpp();
-        if (optimize == .Debug) {
-            lib.linkSystemLibrary("ucrtbased");
-        }
-    }
-
-    return lib;
-}
-
-fn getDetoursLibPath(b: *std.Build, optimize: std.builtin.OptimizeMode) std.Build.LazyPath {
-    const detours_lib_path = b.path("Detours-Built");
-    if (optimize != .Debug) {
-        return detours_lib_path.join(b.allocator, "lib.X64") catch @panic("Can't allocate");
-    } else {
-        return detours_lib_path.join(b.allocator, "lib.Debug.X64") catch @panic("Can't allocate");
-    }
-}
-
 pub fn build(b: *std.Build) !void {
-    const use_prebuilt_detour = b.option(bool, "use-prebuilt-detour", "Use prebuilt detours static library") orelse false;
-
     const hook_cmd = b.step("hook", "Generates hook template source in `src/hooks` directory");
     const hook_name_option = b.option([]const u8, "hook-name", "Name for the generated hook");
     const hook_offset_option = blk: {
@@ -88,18 +24,6 @@ pub fn build(b: *std.Build) !void {
         },
     });
     const optimize = b.standardOptimizeOption(.{});
-
-    if (!use_prebuilt_detour and target.result.abi != .msvc and !target.result.isMinGW()) {
-        return error.OnlyMSVC_GNU;
-    }
-
-    if (use_prebuilt_detour and target.result.abi != .msvc) {
-        return error.OnlyMSVC;
-    }
-
-    if (target.result.cpu.arch != .x86_64) {
-        return error.Onlyx86_64;
-    }
 
     const windows_extra = b.createModule(.{
         .root_source_file = b.path("src/windows_extra.zig"),
@@ -145,18 +69,6 @@ pub fn build(b: *std.Build) !void {
     pawned.root_module.addImport("binary_analysis", binary_analysis);
     pawned.subsystem = .Console;
     pawned.linkLibC();
-
-    // linking Detours...
-    // if (!use_prebuilt_detour) {
-    //     const detours = try addStaticDetours(b, target, optimize);
-
-    //     pawned.linkLibrary(detours);
-    //     pawned.addIncludePath(b.path("Detours"));
-    // } else {
-    //     pawned.addLibraryPath(getDetoursLibPath(b, optimize));
-    //     pawned.linkSystemLibrary("detours");
-    //     pawned.addIncludePath(b.path("Detours-Built/include"));
-    // }
     // pawned.addWin32ResourceFile(.{ .file = b.path("res/resource.rc") });
 
     b.installArtifact(pawned);

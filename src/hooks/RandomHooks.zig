@@ -1,5 +1,3 @@
-// Just a test "hook"
-
 const builtin = @import("builtin");
 const std = @import("std");
 const ba = @import("binary_analysis");
@@ -224,11 +222,50 @@ const stack_state_saver = struct {
 fn hookFn() callconv(.naked) noreturn {
     @setRuntimeSafety(false);
 
-    asm volatile (stack_state_saver.save_call_hook_template
+    // asm volatile (stack_state_saver.save_call_hook_template
+    //     :
+    //     : [onHook] "X" (&onHook),
+    //     : "memory", "cc"
+    // );
+    asm volatile (
+        \\ cmpl $0x100, 0x8(%%rcx)
+        \\ jne 1f
+        \\ movl $0x00, 0x8(%%rcx)
+        \\ 1:
+    );
+
+    // our special signature to detect end of function, too lazy to detect with other means :)
+    asm volatile (
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+    );
+}
+
+fn hookDefWindowProc() callconv(.naked) noreturn {
+    @setRuntimeSafety(false);
+
+    // saving on the stack was taking too much space..
+    asm volatile (heap_state_saver.save_call_hook_template
         :
-        : [onHook] "X" (&onHook),
+        : [onHook] "X" (&onDefaultWndProc),
         : "memory", "cc"
     );
+
+    asm volatile (heap_state_saver.restore_template);
 
     // our special signature to detect end of function, too lazy to detect with other means :)
     asm volatile (
@@ -256,15 +293,29 @@ const allocator = arena.allocator();
 
 var scanner = ba.aob.Scanner.init(allocator);
 
-/// Initializes the *DoSomething* hook with the given detour context.
+var raw_file: ?std.fs.File = null;
+
+/// Initializes the *RandomHooks* hook with the given detour context.
 pub fn init(detour: *ba.Detour) !void {
     _ = arena.reset(.free_all);
 
     const module = try ba.windows.getModuleInfo(allocator, base_module);
     defer module.deinit(allocator);
 
-    const hook_target = module.start + 0x182C2; // hook offset in the module
-    const hook_fn_start = @intFromPtr(&hookFn);
+    // try hookTo(detour, module.start + 0x7389BE, @intFromPtr(&hookFn));
+
+    const u32_module = try ba.windows.getModuleInfo(allocator, "USER32.dll");
+    defer u32_module.deinit(allocator);
+
+    //USER32.dll+AD10 - 48 89 5C 24 08        - mov [rsp+08],rbx
+    try hookTo(detour, u32_module.start + 0xAD10, @intFromPtr(&hookDefWindowProc));
+    //USER32.dll+C6C0 - 48 89 5C 24 08        - mov [rsp+08],rbx
+    //try hookTo(detour, u32_module.start + 0xC6C0, @intFromPtr(&hookDefWindowProc));
+
+    raw_file = try std.fs.createFileAbsolute("logs.txt", .{});
+}
+
+fn hookTo(detour: *ba.Detour, hook_target: usize, hook_fn_start: usize) !void {
     const attached_info = try detour.attach(hook_target, hook_fn_start);
 
     try scanner.search_ranges.append(.{
@@ -280,16 +331,61 @@ pub fn init(detour: *ba.Detour) !void {
     _ = try ba.Detour.emitJmp(hook_fn_end, attached_info.trampoline, null);
 }
 
-/// Cleans up resources allocated by the *DoSomething* hook
+/// Cleans up resources allocated by the *RandomHooks* hook
 pub fn deinit() void {
+    if (raw_file) |f| {
+        f.close();
+    }
     _ = arena.reset(.free_all);
     arena.deinit();
 }
 
 pub const hook_fn_end_signature = [_]u8{ 0x90, 0xCC } ** 8;
-pub const name = "DoSomething";
-pub const base_module = "ptest.exe";
+pub const name = "RandomHooks";
+pub const base_module = "NeedForSpeedUnbound.exe";
 
-fn onHook(regs: *GeneralRegisters) callconv(.c) void {
-    std.debug.print("On {s} hook! Regs: 0x{X}\n", .{ name, @intFromPtr(regs) });
+extern "c" fn fprintf(file: *std.c.FILE, fmt: [*:0]const u8, ...) callconv(.c) c_int;
+
+fn usizeToHexAlloc(value: usize) ![]u8 {
+    @setRuntimeSafety(false);
+    if (value == 0) {
+        const mem: [*]u8 = @ptrCast(std.c.malloc(@sizeOf(u8)) orelse return error.OutOfMemory);
+        mem[0] = '0';
+        return mem[0..1];
+    }
+
+    // Calculate how many hex digits we need
+    var temp = value;
+    var len: usize = 0;
+    while (temp > 0) {
+        temp /= 16;
+        len += 1;
+    }
+
+    const buf: [*]u8 = @ptrCast(std.c.malloc(@sizeOf(u8) * len) orelse return error.OutOfMemory);
+    const hex_chars = "0123456789ABCDEF";
+
+    temp = value;
+    var i = len;
+    while (temp > 0) {
+        i -= 1;
+        buf[i] = hex_chars[temp % 16];
+        temp /= 16;
+    }
+
+    return buf[0..len];
+}
+
+fn onDefaultWndProc(regs: *GeneralRegisters) callconv(.c) void {
+    @setRuntimeSafety(false);
+    //std.debug.print("MSG Type: RDX(UINT,MSG) = 0x{}\n", .{regs.rdx});
+    //_ = regs;
+    if (raw_file) |f| {
+        const hex_rdx = usizeToHexAlloc(regs.rdx) catch return;
+        defer std.c.free(@ptrCast(hex_rdx));
+        f.writeAll("MSG Type: RDX(UINT,MSG) = 0x") catch return;
+        f.writeAll(hex_rdx) catch return;
+        f.writeAll("\n") catch return;
+        //f.writeAll("IME called\n") catch {};
+    }
 }

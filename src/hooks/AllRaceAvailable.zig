@@ -346,7 +346,7 @@ pub fn init(detour: *ba.Detour) !void {
     var scanner = ba.aob.Scanner.init(allocator);
     defer scanner.deinit();
 
-    const module = (try ba.windows.getModuleInfo(allocator, base_module)) orelse return error.ModuleNotFound;
+    const module = try ba.windows.getModuleInfo(allocator, base_module);
     defer module.deinit(allocator);
 
     const hook_target = module.start + 0x2313424;

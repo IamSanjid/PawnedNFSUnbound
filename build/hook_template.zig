@@ -261,8 +261,11 @@ pub fn init(detour: *ba.Detour) !void {
     const module = (try ba.windows.getModuleInfo(allocator, base_module)) orelse return error.ModuleNotFound;
     defer module.deinit(allocator);
 
-    const hook_target = module.start + ${HOOK_OFFSET}; // hook offset in the module
-    const hook_fn_start = @intFromPtr(&hookFn);
+    // hook offset in the module
+    try hookTo(detour, module.start + ${HOOK_OFFSET}, @intFromPtr(&hookFn));
+}
+
+fn hookTo(detour: *ba.Detour, hook_target: usize, hook_fn_start: usize) !void {
     const attached_info = try detour.attach(hook_target, hook_fn_start);
 
     try scanner.search_ranges.append(.{
