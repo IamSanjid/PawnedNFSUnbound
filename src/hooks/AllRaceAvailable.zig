@@ -372,126 +372,7 @@ pub const hook_fn_end_signature = [_]u8{ 0x90, 0xCC } ** 8;
 pub const name = "AllRaceAvailable";
 pub const base_module = "NeedForSpeedUnbound.exe";
 
-const AssetMetadata = extern struct {
-    padding: [0x30]u8,
-    id: u32,
-};
-
-const EventEconomyAsset = extern struct {
-    vtable: ?*anyopaque,
-    metadata: ?*AssetMetadata,
-    int1: i32,
-    int2: i32,
-    asset_name: [*:0]u8,
-    prize_money: *extern struct {
-        ptr1: ?*anyopaque,
-        ptr2: ?*anyopaque,
-        size: u32,
-        start: u32,
-
-        const PrizeList = @This();
-        fn asSlice(self: *PrizeList) []u32 {
-            @setRuntimeSafety(false);
-            const raw_list: [*]u32 = @ptrCast(&self.start);
-            return raw_list[0..self.size];
-        }
-    },
-    ptr1: ?*anyopaque,
-    prize_money_start: ?[*]u32,
-    buy_in: u32,
-
-    const metadata_id: u32 = 0x06980698;
-    fn isValid(self: *const EventEconomyAsset) bool {
-        if (self.metadata) |some_data| {
-            return some_data.id == metadata_id;
-        }
-        return false;
-    }
-};
-
-const ProgressionSessionData = extern struct {
-    padding1: [0x58]u8,
-    meetup: ?*anyopaque,
-    owner_ptr1: ?*ProgressionEventData,
-    owner_ptr2: ?*ProgressionEventData,
-    economy_asset: ?*EventEconomyAsset,
-    wanted_level_increase: f32,
-    wanted_level_required: f32,
-    maximum_metric_SRFM: f32,
-    minimum_metric_SRFM: f32,
-    is_available: bool,
-    is_high_heat: bool,
-};
-
-const ProgressionEventData = extern struct {
-    vtable: ?*anyopaque,
-    metadata: ?*AssetMetadata,
-    int1: i32,
-    int2: i32,
-    hard: ?*anyopaque,
-    easy: ?*anyopaque,
-    normal: ?*anyopaque,
-    thursday_night: ProgressionSessionData,
-    padding1: [@sizeOf(ProgressionSessionData) * 12]u8,
-    friday_day: ProgressionSessionData,
-    qualifier_day_meetup: ?*anyopaque,
-    force_in_world_start_marker: bool,
-    qualifier_day: bool,
-
-    const metadata_id: u32 = 0x14561456;
-    fn isValid(self: *const ProgressionEventData) bool {
-        if (self.metadata) |data| {
-            return data.id == metadata_id;
-        }
-        return false;
-    }
-
-    const max_days_data: usize = 14;
-    fn daysData(self: *ProgressionEventData) []ProgressionSessionData {
-        @setRuntimeSafety(false);
-        const raw_list: [*]ProgressionSessionData = @ptrCast(&self.thursday_night);
-        return raw_list[0..max_days_data];
-    }
-};
-
-// NOTE: the padding is needed when the @sizeOf(type) >= 8?
-const EventsUnlocksList = extern struct {
-    ptr1: ?*anyopaque,
-    ptr2: ?*anyopaque,
-    padding1: u32,
-    size: u32,
-    start: ?*ProgressionEventData,
-
-    fn asSlice(self: *EventsUnlocksList) []?*ProgressionEventData {
-        @setRuntimeSafety(false);
-        const raw_list: [*]?*ProgressionEventData = @ptrCast(&self.start);
-        return raw_list[0..self.size];
-    }
-};
-
-const EventProgressionAsset = extern struct {
-    vtable: ?*anyopaque,
-    metadata: ?*AssetMetadata,
-    int1: i32,
-    int2: i32,
-    asset_name: [*:0]u8,
-    event_unlocks_list_start: ?[*]ProgressionEventData,
-    event_unlocks_list: ?*EventsUnlocksList,
-
-    const metadata_id: u32 = 0x06110611;
-    fn isValid(self: *const EventProgressionAsset) bool {
-        if (self.metadata) |data| {
-            return data.id == metadata_id;
-        }
-        return false;
-    }
-
-    fn hasEventUnlocksList(self: *const EventProgressionAsset) bool {
-        const event_unlocks_list_start: usize = @intFromPtr(self.event_unlocks_list_start);
-        const event_unlocks_list: usize = @intFromPtr(self.event_unlocks_list);
-        return event_unlocks_list < event_unlocks_list_start; // otherwise it has "ChildAssets"
-    }
-};
+const sdk = @import("nfs_unbound_sdk.zig");
 
 const interested_guids = [_][]const u8{
     // gameplay/progression/ExcaliburCampaignEvents_Milestone_01: 2240d2dc-5606-4964-a831-d402ec3424e5
@@ -507,10 +388,11 @@ const interested_assets = [_][]const u8{
 
 fn onHook() callconv(.c) void {
     @setRuntimeSafety(false);
-    const event_progression_asset: *EventProgressionAsset = @ptrFromInt(rdi.*);
+    const event_progression_asset: *sdk.EventProgressionAsset = @ptrFromInt(rdi.*);
 
     if (!event_progression_asset.isValid()) return;
-    if (!event_progression_asset.hasEventUnlocksList()) return;
+    const event_unlocks = event_progression_asset.event_unlocks orelse return;
+    if (event_unlocks.count() == 0) return;
 
     //const guid: [*]const u8 = @alignCast(@as([*]const u8, @ptrFromInt(rdi.* - 0x10)));
     for (interested_assets) |interested| {
@@ -526,17 +408,16 @@ fn onHook() callconv(.c) void {
         std.debug.print("AllRaceAvailable: matched = 0x{X} - {s}\n - event unlocks list size: {d}\n", .{
             rdi.*,
             event_progression_asset.asset_name,
-            event_progression_asset.event_unlocks_list.?.size,
+            event_unlocks.count(),
         });
-        const events = event_progression_asset.event_unlocks_list.?.asSlice();
-        for (events) |evt| {
-            const event = evt orelse continue;
+        const events = event_unlocks.span();
+        for (events) |event| {
             if (!event.isValid()) continue;
             //if (event.easy == null or event.normal == null or event.hard == null) continue;
 
             const days_data = event.daysData();
             // first find best economy asset
-            var best_economy_asset: ?*EventEconomyAsset = null;
+            var best_economy_asset: ?*sdk.EventEconomyAsset = null;
             var best_meetup: ?*anyopaque = null;
             var lowest_non_zero_wanted_gained: f32 = 0.0;
             for (days_data) |*day| {
@@ -552,7 +433,9 @@ fn onHook() callconv(.c) void {
                     if (economy.buy_in < best.buy_in) {
                         best_economy_asset = economy;
                         best_meetup = meetup;
-                    } else if (best.prize_money.start > economy.prize_money.start) {
+                    } else if (economy.prize_money.count() == 0 or
+                        best.prize_money.at(0) > economy.prize_money.at(0))
+                    {
                         best_economy_asset = economy;
                         best_meetup = meetup;
                     }
@@ -572,15 +455,4 @@ fn onHook() callconv(.c) void {
             }
         }
     }
-}
-
-test "offsets" {
-    try std.testing.expectEqual(0x18, @offsetOf(EventProgressionAsset, "asset_name"));
-    try std.testing.expectEqual(0x20, @offsetOf(EventProgressionAsset, "event_unlocks_list_start"));
-    try std.testing.expectEqual(0x28, @offsetOf(EventProgressionAsset, "event_unlocks_list"));
-
-    try std.testing.expectEqual(0x14, @offsetOf(EventsUnlocksList, "size"));
-    try std.testing.expectEqual(0x18, @offsetOf(EventsUnlocksList, "start"));
-
-    try std.testing.expectEqual(0x90, @sizeOf(ProgressionSessionData));
 }

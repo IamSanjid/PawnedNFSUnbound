@@ -66,6 +66,7 @@ pub fn deinit() void {
     // @import("hooks/RandomHooks.zig").deinit();
     // Auto-Generated!!!
     @import("hooks/CopyRaceVehicleConfig.zig").deinit();
+    // Auto-Generated!!!
     @import("hooks/AllRaceAvailable.zig").deinit();
     // @import("hooks/DoSomething.zig").deinit();
 
