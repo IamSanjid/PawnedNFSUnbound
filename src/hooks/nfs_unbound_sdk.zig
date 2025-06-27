@@ -1,5 +1,8 @@
 const std = @import("std");
 
+// it should be fine but can be increased if needed, the main purpose is to prevent reading undefined memory
+const max_ref_count: u32 = 10;
+
 // ========== General ==========
 
 pub const AssetMetadata = extern struct {
@@ -44,18 +47,18 @@ pub fn List(comptime T: type) type {
             return start_ptr[0..list_size];
         }
 
-        pub fn dupeWithExtra(self: *Self, ally: std.mem.Allocator, extra: usize) ?*Self {
+        pub fn dupeWithExtra(self: *Self, allocator: std.mem.Allocator, extra: usize) ?*Self {
             @setRuntimeSafety(false);
             const new_size = @as(u32, @truncate(self.count())) + @as(u32, @truncate(extra));
-            const new_list = Self.new(ally, new_size) orelse return null;
+            const new_list = Self.new(allocator, new_size) orelse return null;
             @memcpy(new_list.span(), self.span());
             return new_list;
         }
 
-        pub fn new(ally: std.mem.Allocator, size: u32) ?*Self {
+        pub fn new(allocator: std.mem.Allocator, size: u32) ?*Self {
             @setRuntimeSafety(false);
             const total_size = @sizeOf(u32) + @sizeOf(T) * size;
-            const raw = ally.alignedAlloc(u8, .of(T), total_size) catch return null;
+            const raw = allocator.alignedAlloc(u8, .of(T), total_size) catch return null;
             const size_ptr: *u32 = @ptrFromInt(@intFromPtr(raw.ptr));
             size_ptr.* = size;
             return @ptrFromInt(@intFromPtr(raw.ptr) + @sizeOf(u32));
@@ -63,12 +66,19 @@ pub fn List(comptime T: type) type {
     };
 }
 
+pub fn isListType(comptime T: type) bool {
+    const type_info = @typeInfo(T);
+    if (type_info != .@"struct" or !@hasDecl(T, "ChildType")) return false;
+    if (T != List(T.ChildType)) return false;
+    return true;
+}
+
 // ========== Event Related ==========
 
 pub const EventEconomyAsset = extern struct {
     vtable: ?*anyopaque,
     metadata: ?*AssetMetadata,
-    int1: u32,
+    ref_count: u32,
     int2: u32,
     asset_name: [*:0]u8,
     multiplayer_scalar_overrides: ?*anyopaque,
@@ -107,7 +117,7 @@ pub const ProgressionSessionData = extern struct {
 pub const ProgressionEventData = extern struct {
     vtable: ?*anyopaque,
     metadata: ?*AssetMetadata,
-    int1: u32,
+    ref_count: u32,
     int2: u32,
     hard: ?*anyopaque,
     easy: ?*anyopaque,
@@ -121,7 +131,7 @@ pub const ProgressionEventData = extern struct {
 
     const metadata_id: u32 = 0x14561456;
     pub fn isValid(self: *const ProgressionEventData) bool {
-        if (self.int1 != 2) return false;
+        if (self.ref_count == 0 or self.ref_count > max_ref_count) return false;
         if (self.metadata) |data| {
             return data.id == metadata_id;
         }
@@ -139,7 +149,7 @@ pub const ProgressionEventData = extern struct {
 pub const EventProgressionAsset = extern struct {
     vtable: ?*anyopaque,
     metadata: ?*AssetMetadata,
-    int1: u32,
+    ref_count: u32,
     int2: u32,
     asset_name: [*:0]u8,
     event_unlocks: ?*List(*ProgressionEventData),
@@ -147,7 +157,7 @@ pub const EventProgressionAsset = extern struct {
 
     const metadata_id: u32 = 0x06110611;
     pub fn isValid(self: *const EventProgressionAsset) bool {
-        if (self.int1 != 2) return false;
+        if (self.ref_count == 0 or self.ref_count > max_ref_count) return false;
         if (self.metadata) |data| {
             return data.id == metadata_id;
         }
@@ -175,7 +185,7 @@ pub const RaceVehiclePerformanceModificationItemData = extern struct {
 pub const RaceVehiclePerformanceModifierData = extern struct {
     vtable: ?*anyopaque,
     metadata: ?*AssetMetadata,
-    int1: u32,
+    ref_count: u32,
     int2: u32,
     asset_name: [*:0]const u8,
     performance_modifications: ?*List(RaceVehiclePerformanceModificationItemData),
@@ -184,7 +194,7 @@ pub const RaceVehiclePerformanceModifierData = extern struct {
 pub const RaceVehiclePerformanceUpgradeData = extern struct {
     vtable: ?*anyopaque,
     metadata: ?*AssetMetadata,
-    int1: u32,
+    ref_count: u32,
     int2: u32,
     asset_name: [*:0]const u8,
     performance_modifier_data: ?*RaceVehiclePerformanceModifierData,
@@ -193,7 +203,7 @@ pub const RaceVehiclePerformanceUpgradeData = extern struct {
 pub const RaceVehicleChassisConfigData = extern struct {
     vtable: ?*anyopaque,
     metadata: ?*AssetMetadata,
-    int1: u32,
+    ref_count: u32,
     int2: u32,
     asset_name: [*:0]const u8,
     inertia_box_vehicle_physics: Vec3WithPadding,
@@ -208,7 +218,7 @@ pub const RaceVehicleChassisConfigData = extern struct {
 
     const metadata_id: u32 = 0x06690669;
     pub fn isValid(self: *const RaceVehicleChassisConfigData) bool {
-        if (self.int1 != 2) return false;
+        if (self.ref_count == 0 or self.ref_count > max_ref_count) return false;
         if (self.metadata) |data| {
             return data.id == metadata_id;
         }
@@ -219,7 +229,7 @@ pub const RaceVehicleChassisConfigData = extern struct {
 pub const RaceVehicleEngineConfigData = extern struct {
     vtable: ?*anyopaque,
     metadata: ?*AssetMetadata,
-    int1: u32,
+    ref_count: u32,
     int2: u32,
     asset_name: [*:0]const u8,
     torque_noise: ?*anyopaque,
@@ -251,7 +261,8 @@ pub const RaceVehicleEngineConfigData = extern struct {
 
     const metadata_id: u32 = 0x049F049F;
     pub fn isValid(self: *const RaceVehicleEngineConfigData) bool {
-        if (self.int1 != 2 or self.int2 != 0x0005B100) return false;
+        if (self.ref_count == 0 or self.ref_count > max_ref_count) return false;
+        if (self.int2 & 0xB100 != 0xB100) return false;
         if (self.metadata) |data| {
             return data.id == metadata_id;
         }
@@ -262,7 +273,7 @@ pub const RaceVehicleEngineConfigData = extern struct {
 pub const RaceVehicleEngineData = extern struct {
     vtable: ?*anyopaque,
     metadata: ?*AssetMetadata,
-    int1: u32,
+    ref_count: u32,
     int2: u32,
     asset_name: [*:0]const u8,
     engine_config: ?*RaceVehicleEngineConfigData,
@@ -271,7 +282,7 @@ pub const RaceVehicleEngineData = extern struct {
 
     const metadata_id: u32 = 0x05EA05EA;
     pub fn isValid(self: *const RaceVehicleEngineData) bool {
-        if (self.int1 != 2) return false;
+        if (self.ref_count == 0 or self.ref_count > max_ref_count) return false;
         if (self.metadata) |metadata| {
             return metadata.id == metadata_id;
         }
@@ -282,7 +293,7 @@ pub const RaceVehicleEngineData = extern struct {
 pub const RaceVehicleEngineUpgradesData = extern struct {
     vtable: ?*anyopaque,
     metadata: ?*AssetMetadata,
-    int1: u32,
+    ref_count: u32,
     int2: u32,
     asset_name: [*:0]const u8,
     engine_upgrades: ?*List(?*RaceVehicleEngineData),
@@ -291,7 +302,7 @@ pub const RaceVehicleEngineUpgradesData = extern struct {
 pub const RaceVehicleConfigData = extern struct {
     vtable: ?*anyopaque,
     metadata: ?*AssetMetadata,
-    int1: u32,
+    ref_count: u32,
     int2: u32,
     asset_name: [*:0]const u8,
     padding1: [224]u8,
@@ -353,7 +364,7 @@ pub const RaceVehicleConfigData = extern struct {
 
     const metadata_id: u32 = 0x06B006B0;
     pub fn isValid(self: *const RaceVehicleConfigData) bool {
-        if (self.int1 != 2) return false;
+        if (self.ref_count == 0 or self.ref_count > max_ref_count) return false;
         if (self.int2 & 0xB100 != 0xB100) return false;
         if (self.metadata) |data| {
             return data.id == metadata_id;
@@ -371,7 +382,7 @@ pub const ItemDataId = extern struct {
 pub const FrameItemData = extern struct {
     vtable: ?*anyopaque,
     metadata: ?*AssetMetadata,
-    int1: u32,
+    ref_count: u32,
     int2: u32,
     asset_name: [*:0]const u8,
     item_ui: ?*anyopaque,
@@ -389,7 +400,7 @@ pub const FrameItemData = extern struct {
 
     const metadata_id: u32 = 0x04E404E4;
     pub fn isValid(self: *const FrameItemData) bool {
-        if (self.int1 != 2) return false;
+        if (self.ref_count == 0 or self.ref_count > max_ref_count) return false;
         if (self.int2 & 0xB100 != 0xB100) return false;
         if (self.metadata) |data| {
             return data.id == metadata_id;
@@ -401,7 +412,7 @@ pub const FrameItemData = extern struct {
 pub const DriveTrainItemData = extern struct {
     vtable: ?*anyopaque,
     metadata: ?*AssetMetadata,
-    int1: u32,
+    ref_count: u32,
     int2: u32,
     asset_name: [*:0]const u8,
     item_ui: ?*anyopaque,
@@ -419,7 +430,7 @@ pub const DriveTrainItemData = extern struct {
 
     const metadata_id: u32 = 0x04E004E0;
     pub fn isValid(self: *const DriveTrainItemData) bool {
-        if (self.int1 != 2) return false;
+        if (self.ref_count == 0 or self.ref_count > max_ref_count) return false;
         if (self.int2 & 0xB100 != 0xB100) return false;
         if (self.metadata) |data| {
             return data.id == metadata_id;
@@ -431,7 +442,7 @@ pub const DriveTrainItemData = extern struct {
 pub const EngineStructureItemData = extern struct {
     vtable: ?*anyopaque,
     metadata: ?*AssetMetadata,
-    int1: u32,
+    ref_count: u32,
     int2: u32,
     asset_name: [*:0]const u8,
     item_ui: ?*anyopaque,
@@ -458,7 +469,7 @@ pub const EngineStructureItemData = extern struct {
 
     const metadata_id: u32 = 0x04E304E3;
     pub fn isValid(self: *const EngineStructureItemData) bool {
-        if (self.int1 != 2) return false;
+        if (self.ref_count == 0 or self.ref_count > max_ref_count) return false;
         if (self.int2 & 0xB100 != 0xB100) return false;
         if (self.metadata) |data| {
             return data.id == metadata_id;
@@ -470,7 +481,7 @@ pub const EngineStructureItemData = extern struct {
 pub const RaceVehicleItemData = extern struct {
     vtable: ?*anyopaque,
     metadata: ?*AssetMetadata,
-    int1: u32,
+    ref_count: u32,
     int2: u32,
     asset_name: [*:0]const u8,
     item_ui: ?*anyopaque,
@@ -505,7 +516,7 @@ pub const RaceVehicleItemData = extern struct {
 
     const metadata_id: u32 = 0x04C804C8;
     pub fn isValid(self: *const RaceVehicleItemData) bool {
-        if (self.int1 != 2) return false;
+        if (self.ref_count == 0 or self.ref_count > max_ref_count) return false;
         if (self.int2 & 0xB100 != 0xB100) return false;
         if (self.metadata) |data| {
             return data.id == metadata_id;

@@ -219,12 +219,12 @@ const stack_state_saver = struct {
     , .{});
 };
 
-fn inputActionMapsDataHookFn() callconv(.naked) noreturn {
+fn loadingSceneHookFn() callconv(.naked) noreturn {
     @setRuntimeSafety(false);
 
     asm volatile (stack_state_saver.save_call_hook_template
         :
-        : [onHook] "X" (&onInputActionMapsData),
+        : [onHook] "X" (&onLoadingScene),
         : "memory", "cc"
     );
 
@@ -321,13 +321,13 @@ pub fn init(detour: *ba.Detour) !void {
     const module = try ba.windows.getModuleInfo(allocator, base_module);
     defer module.deinit(allocator);
 
-    // NeedForSpeedUnbound.exe+1ADBBE0 - 48 8B 13              - mov rdx,[rbx]
-    try hookTo(detour, module.start + 0x1ADBBE0, @intFromPtr(&inputActionMapsDataHookFn));
+    // NeedForSpeedUnbound.exe+220FA36 - 48 8B C8              - mov rcx,rax
+    try hookTo(detour, module.start + 0x220FA36, @intFromPtr(&loadingSceneHookFn));
     // on resource constructor call,  resource->vtable[0](resource), vtable's first function
     try hookTo(detour, module.start + 0x25A1737, @intFromPtr(&resourceConstructHookFn));
     // NeedForSpeedUnbound.exe+1368FDA - 48 8B 10              - mov rdx,[rax]
     // NeedForSpeedUnbound.exe+137A356 - 48 8B 10              - mov rdx,[rax]
-    try hookTo(detour, module.start + 0x137A356, @intFromPtr(&resourceItemDataHookFn));
+    // try hookTo(detour, module.start + 0x137A356, @intFromPtr(&resourceItemDataHookFn));
 }
 
 fn hookTo(detour: *ba.Detour, hook_target: usize, hook_fn_start: usize) !void {
@@ -368,15 +368,8 @@ const EngineStructureItemData = sdk.EngineStructureItemData;
 const RaceVehicleItemData = sdk.RaceVehicleItemData;
 const ItemDataId = sdk.ItemDataId;
 
-fn isListType(comptime T: type) bool {
-    const type_info = @typeInfo(T);
-    if (type_info != .@"struct" or !@hasDecl(T, "ChildType")) return false;
-    if (T != List(T.ChildType)) return false;
-    return true;
-}
-
 fn RecursiveConfigableAction(comptime T: type) type {
-    if (isListType(T)) {
+    if (sdk.isListType(T)) {
         return union(enum) {
             skip: void,
             copy: void,
@@ -623,21 +616,26 @@ fn CopyState(comptime T: type) type {
         const Self = @This();
 
         fn reset(self: *Self) void {
-            self.froms.clearAndFree();
-            self.tos.clearAndFree();
+            self.froms.clearRetainingCapacity();
+            self.tos.clearRetainingCapacity();
         }
 
         fn populateHashSet(self: *Self, data_ptr: ?*T) bool {
-            @setRuntimeSafety(false);
             const data = data_ptr orelse return false;
             if (!data.isValid()) return false;
 
             const asset_name = std.mem.span(data.asset_name);
             if (std.ascii.eqlIgnoreCase(asset_name, self.from_ident)) {
+                if (T == RaceVehicleConfigData) {
+                    std.debug.print("Found from RaceVehicleConfigData at 0x{X}\n", .{@intFromPtr(data)});
+                }
                 self.froms.put(data, {}) catch return false;
                 return true;
             }
             if (std.ascii.eqlIgnoreCase(asset_name, self.to_ident)) {
+                if (T == RaceVehicleConfigData) {
+                    std.debug.print("Found to RaceVehicleConfigData at 0x{X}\n", .{@intFromPtr(data)});
+                }
                 self.tos.put(data, {}) catch return false;
                 return true;
             }
@@ -654,8 +652,8 @@ fn CopyState(comptime T: type) type {
                 const to_ptr = self.nextTo(&to_i) orelse break;
 
                 if (self.doCopy(from_ptr, to_ptr)) {
-                    self.froms.clearAndFree();
-                    self.tos.clearAndFree();
+                    self.froms.clearRetainingCapacity();
+                    self.tos.clearRetainingCapacity();
                     return to_ptr;
                 }
             }
@@ -766,8 +764,8 @@ const CopyRaceVechicle = struct {
     copied_engines: ?*List(ItemDataId) = null,
 
     fn reset(self: *CopyRaceVechicle) void {
-        self.to_configs.clearAndFree();
-        self.from_scope_ids.clearAndFree();
+        self.to_configs.clearRetainingCapacity();
+        self.from_scope_ids.clearRetainingCapacity();
         self.config_copy.reset();
         self.item_copy.reset();
     }
@@ -779,22 +777,21 @@ const CopyRaceVechicle = struct {
     }
 
     fn performItemCopy(self: *CopyRaceVechicle, e_items: EngineItems, skip_ids: []const u32) void {
-        var _i: isize = 0;
-        while (true) : (_i += 1) {
-            const i: usize = @intCast(_i);
-            if (i >= self.to_configs.items.len) return;
-            const to_config = self.to_configs.items[@intCast(i)];
+        if (self.to_configs.items.len == 0) return;
+        var i: usize = self.to_configs.items.len - 1;
+        while (true) : (i -= 1) {
+            const to_config = self.to_configs.items[i];
             if (!to_config.isValid()) {
                 std.debug.print("not proper RaceVehicleConfigData? 0x{X}\n", .{@intFromPtr(to_config)});
                 _ = self.to_configs.orderedRemove(i);
-                _i -= 1;
-                continue;
+                if (i == 0) break else continue;
             }
+
             const engine_upgrades = to_config.engine_upgrades orelse continue;
             const engine_upgrades_list = engine_upgrades.engine_upgrades orelse continue;
             const engines = engine_upgrades_list.span();
             if (e_items.count() + 10 < engines.len) {
-                continue;
+                return; // need more engine structure items
             }
 
             froms_loop: while (true) {
@@ -854,7 +851,7 @@ const CopyRaceVechicle = struct {
                         }
                         if (j < from_scope_ids.len) {
                             const amount_left = from_scope_ids.len - j;
-                            // TODO: After proper resetting of hook is present.
+                            // TODO: Test the list dupeWithExtra throughly
                             // if (sorted_scope_list.dupeWithExtra(allocator, amount_left)) |new_scope_list| {
                             //     const new_scope = new_scope_list.span();
                             //     var start_idx: usize = new_scope.len - amount_left;
@@ -885,6 +882,8 @@ const CopyRaceVechicle = struct {
                     break;
                 }
             }
+
+            if (i == 0) break;
         }
     }
 };
@@ -934,13 +933,13 @@ var skip_engine_items = [_]u32{
 
 var mutex = std.Thread.Mutex{};
 
-fn onInputActionMapsData(regs: *GeneralRegisters) callconv(.c) void {
+fn onLoadingScene(regs: *GeneralRegisters) callconv(.c) void {
     _ = regs;
 
     mutex.lock();
     defer mutex.unlock();
 
-    std.debug.print("onInputActionMapsData called, resetting!\n", .{});
+    std.debug.print("onLoadingScene called, resetting!\n", .{});
 
     for (&engine_data_copies) |*copy| {
         copy.reset();
@@ -950,7 +949,7 @@ fn onInputActionMapsData(regs: *GeneralRegisters) callconv(.c) void {
         copy.reset();
     }
 
-    engine_items.clearAndFree();
+    engine_items.clearRetainingCapacity();
 
     for (&engine_structure_copies) |*copy| {
         copy.reset();
@@ -978,7 +977,9 @@ fn onResourceConstruct(regs: *GeneralRegisters) callconv(.c) void {
     for (&engine_data_copies) |*copy| {
         const found = copy.populateHashSet(@ptrFromInt(regs.rsi));
         _ = copy.performCopy();
-        if (found) return;
+        if (found) {
+            return;
+        }
     }
 
     for (&race_vehicle_copies) |*copy| {
@@ -992,11 +993,38 @@ fn onResourceConstruct(regs: *GeneralRegisters) callconv(.c) void {
         }
     }
 
+    for (&frame_copies) |*copy| {
+        const found = copy.populateHashSet(@ptrFromInt(regs.rsi));
+        _ = copy.performCopy();
+        if (found) {
+            return;
+        }
+    }
+
+    for (&drive_train_copies) |*copy| {
+        const found = copy.populateHashSet(@ptrFromInt(regs.rsi));
+        _ = copy.performCopy();
+        if (found) {
+            return;
+        }
+    }
+
     // EngineStructure :)
     {
         const es_item_ptr: ?*EngineStructureItemData = @ptrFromInt(regs.rsi);
         const es_item = es_item_ptr orelse return;
         if (!es_item.isValid()) return;
+        for (&engine_structure_copies) |*copy| {
+            const found = copy.populateHashSet(es_item);
+            _ = copy.performCopy();
+            if (found) {
+                engine_items.put(es_item.id, es_item) catch return;
+                for (&race_vehicle_copies) |*copy_item| {
+                    copy_item.performItemCopy(engine_items, &skip_engine_items);
+                }
+                return;
+            }
+        }
         const es_item_asset_name = std.mem.span(es_item.asset_name);
         // At this point we probably don't have enough information to distinguish between "engine structure" items,
         if (std.ascii.startsWithIgnoreCase(es_item_asset_name, "items/performanceitems/engines/")) {
@@ -1008,14 +1036,12 @@ fn onResourceConstruct(regs: *GeneralRegisters) callconv(.c) void {
     }
 }
 
-var res_item_data_mutex = std.Thread.Mutex{};
-
 var engine_structure_copies = [_]CopyState(EngineStructureItemData){
     .{
         .from_ident = "items/performanceitems/engines/car_ford_mustangboss302_1969_enginestructure",
         .to_ident = "items/performanceitems/engines/car_bmw_m3e46gtr_2003_razernfsmw_enginestructure",
         .config = fullCopyConfigable(EngineStructureItemData, .{
-            .ui_sort_index = ConfigableAction(u32).skip,
+            // .ui_sort_index = ConfigableAction(u32).skip,
             .asset_name = ConfigableAction([*:0]const u8).skip,
             .item_ui = ConfigableAction(?*anyopaque).skip,
             .id = ConfigableAction(u32).skip,
@@ -1055,19 +1081,25 @@ fn onResourceItemData(regs: *GeneralRegisters) callconv(.c) void {
     for (&engine_structure_copies) |*copy| {
         const found = copy.populateHashSet(@ptrFromInt(regs.rax));
         _ = copy.performCopy();
-        if (found) return;
+        if (found) {
+            return;
+        }
     }
 
     for (&frame_copies) |*copy| {
         const found = copy.populateHashSet(@ptrFromInt(regs.rax));
         _ = copy.performCopy();
-        if (found) return;
+        if (found) {
+            return;
+        }
     }
 
     for (&drive_train_copies) |*copy| {
         const found = copy.populateHashSet(@ptrFromInt(regs.rax));
         _ = copy.performCopy();
-        if (found) return;
+        if (found) {
+            return;
+        }
     }
 }
 
