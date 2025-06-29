@@ -32,15 +32,11 @@ pub fn List(comptime T: type) type {
         pub fn at(self: *Self, index: usize) T {
             const list_size = self.count();
             std.debug.assert(index < list_size);
-            {
-                @setRuntimeSafety(false);
-                const start_ptr: [*]T = @ptrCast(&self.start);
-                return start_ptr[index];
-            }
+            const start_ptr: [*]T = @ptrCast(&self.start);
+            return start_ptr[index];
         }
 
         pub fn span(self: *Self) []T {
-            @setRuntimeSafety(false);
             const list_size = self.count();
             if (list_size == 0) return &.{};
             const start_ptr: [*]T = @ptrCast(&self.start);
@@ -48,7 +44,6 @@ pub fn List(comptime T: type) type {
         }
 
         pub fn dupeWithExtra(self: *Self, allocator: std.mem.Allocator, extra: usize) ?*Self {
-            @setRuntimeSafety(false);
             const new_size = @as(u32, @truncate(self.count())) + @as(u32, @truncate(extra));
             const new_list = Self.new(allocator, new_size) orelse return null;
             @memcpy(new_list.span(), self.span());
@@ -74,6 +69,16 @@ pub fn isListType(comptime T: type) bool {
 }
 
 // ========== Event Related ==========
+
+pub const Tier = enum(c_uint) {
+    d = 0,
+    c = 1,
+    b = 2,
+    a = 3,
+    s = 4,
+    count = 5,
+    invalid = std.math.maxInt(c_uint),
+};
 
 pub const EventEconomyAsset = extern struct {
     vtable: ?*anyopaque,
@@ -114,6 +119,33 @@ pub const ProgressionSessionData = extern struct {
     is_high_heat: bool,
 };
 
+pub const CalendarAvailability = extern struct {
+    thursday_night: ProgressionSessionData,
+    friday_night: ProgressionSessionData,
+    sunday_night: ProgressionSessionData,
+    sunday_day: ProgressionSessionData,
+    thursday_day: ProgressionSessionData,
+    tuesday_day: ProgressionSessionData,
+    wednesday_night: ProgressionSessionData,
+    wednesday_day: ProgressionSessionData,
+    monday_day: ProgressionSessionData,
+    saturday_night: ProgressionSessionData,
+    saturday_day: ProgressionSessionData,
+    monday_night: ProgressionSessionData,
+    tuesday_night: ProgressionSessionData,
+    friday_day: ProgressionSessionData,
+    qualifier_day_meetup: ?*anyopaque,
+    force_in_world_start_marker: bool,
+    qualifier_day: bool,
+
+    const max_session_data_count: usize = 14;
+    pub fn sessionDataSlice(self: *CalendarAvailability) []ProgressionSessionData {
+        @setRuntimeSafety(false);
+        const slice: [*]ProgressionSessionData = @ptrCast(&self.thursday_night);
+        return slice[0..max_session_data_count];
+    }
+};
+
 pub const ProgressionEventData = extern struct {
     vtable: ?*anyopaque,
     metadata: ?*AssetMetadata,
@@ -122,12 +154,28 @@ pub const ProgressionEventData = extern struct {
     hard: ?*anyopaque,
     easy: ?*anyopaque,
     normal: ?*anyopaque,
-    thursday_night: ProgressionSessionData,
-    padding1: [@sizeOf(ProgressionSessionData) * 12]u8,
-    friday_day: ProgressionSessionData,
-    qualifier_day_meetup: ?*anyopaque,
-    force_in_world_start_marker: bool,
-    qualifier_day: bool,
+    calendar_availability: CalendarAvailability,
+    playlist: ?*anyopaque,
+    gifted_items: ?*anyopaque,
+    phone_call_settings: ?*anyopaque,
+    xp_reward_asset: ?*anyopaque,
+    unlock_playable: ?*anyopaque,
+    on_fail_unlocks: ?*anyopaque,
+    game_mode: ?*anyopaque,
+    gifted_vehicle_list: ?*anyopaque,
+    unlock_lists: ?*anyopaque,
+    phone_call_rival_override: ?*anyopaque,
+    unlock_unavailable: ?*anyopaque,
+    unlock_visible: ?*anyopaque,
+    dynamic_event_settings: ?*anyopaque,
+    voice_over_asset: ?*anyopaque,
+    rivals_override: ?*anyopaque,
+    tier: Tier,
+    rival_template_override_tag_id: i32,
+    is_permanent_for_session: bool,
+    phone_call_rival_is_overridden: bool,
+    is_new: bool,
+    is_debug: bool,
 
     const metadata_id: u32 = 0x14561456;
     pub fn isValid(self: *const ProgressionEventData) bool {
@@ -136,13 +184,6 @@ pub const ProgressionEventData = extern struct {
             return data.id == metadata_id;
         }
         return false;
-    }
-
-    const max_days_data: usize = 14;
-    pub fn daysData(self: *ProgressionEventData) []ProgressionSessionData {
-        @setRuntimeSafety(false);
-        const raw_list: [*]ProgressionSessionData = @ptrCast(&self.thursday_night);
-        return raw_list[0..max_days_data];
     }
 };
 
@@ -531,6 +572,11 @@ test "offsets" {
     try std.testing.expectEqual(0x28, @offsetOf(EventProgressionAsset, "child_assets"));
 
     try std.testing.expectEqual(0x90, @sizeOf(ProgressionSessionData));
+
+    // try std.testing.expectEqual(0x810, @offsetOf(ProgressionEventData, "qualifier_day_meetup"));
+    try std.testing.expectEqual(0x890, @offsetOf(ProgressionEventData, "rivals_override"));
+    try std.testing.expectEqual(0x89C, @offsetOf(ProgressionEventData, "rival_template_override_tag_id"));
+    try std.testing.expectEqual(0x8A3, @offsetOf(ProgressionEventData, "is_debug"));
 
     try std.testing.expectEqual(0x18, @offsetOf(RaceVehicleConfigData, "asset_name"));
     try std.testing.expectEqual(0x100, @offsetOf(RaceVehicleConfigData, "performance_modifiers"));

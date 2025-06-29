@@ -387,7 +387,6 @@ const interested_assets = [_][]const u8{
 };
 
 fn onHook() callconv(.c) void {
-    @setRuntimeSafety(false);
     const event_progression_asset: *sdk.EventProgressionAsset = @ptrFromInt(rdi.*);
 
     if (!event_progression_asset.isValid()) return;
@@ -411,22 +410,36 @@ fn onHook() callconv(.c) void {
             event_unlocks.count(),
         });
         const events = event_unlocks.span();
+
+        var rivals_override: ?*anyopaque = null;
+        if (rivals_override == null) {
+            for (events) |event| {
+                if (!event.isValid()) continue;
+                if (event.rivals_override) |override| {
+                    rivals_override = override;
+                    break;
+                }
+            }
+        }
+
         for (events) |event| {
             if (!event.isValid()) continue;
             //if (event.easy == null or event.normal == null or event.hard == null) continue;
 
-            const days_data = event.daysData();
+            const sessions = event.calendar_availability.sessionDataSlice();
             // first find best economy asset
             var best_economy_asset: ?*sdk.EventEconomyAsset = null;
             var best_meetup: ?*anyopaque = null;
             var lowest_non_zero_wanted_gained: f32 = 0.0;
-            for (days_data) |*day| {
-                const economy = day.economy_asset orelse continue;
-                const meetup = day.meetup orelse continue;
+            for (sessions) |*session| {
+                const economy = session.economy_asset orelse continue;
+                const meetup = session.meetup orelse continue;
                 if (!economy.isValid()) continue;
 
-                if (day.wanted_level_increase > 0.0 and day.wanted_level_increase < lowest_non_zero_wanted_gained) {
-                    lowest_non_zero_wanted_gained = day.wanted_level_increase;
+                if (session.wanted_level_increase > 0.0 and session.wanted_level_increase < lowest_non_zero_wanted_gained) {
+                    lowest_non_zero_wanted_gained = session.wanted_level_increase;
+                } else if (lowest_non_zero_wanted_gained == 0.0) {
+                    lowest_non_zero_wanted_gained = session.wanted_level_increase;
                 }
 
                 if (best_economy_asset) |best| {
@@ -445,13 +458,18 @@ fn onHook() callconv(.c) void {
                 }
             }
 
-            // set the best economy asset to the event progression asset
-            for (days_data) |*day| {
-                if (day.economy_asset != null and day.meetup != null) continue;
-                day.economy_asset = best_economy_asset;
-                day.meetup = best_meetup;
-                day.is_available = true;
-                day.wanted_level_increase = lowest_non_zero_wanted_gained;
+            // set the best economy asset to the event progression sessions
+            for (sessions) |*session| {
+                if (session.economy_asset != null and session.meetup != null) continue;
+                session.economy_asset = best_economy_asset;
+                session.meetup = best_meetup;
+                session.is_available = true;
+                session.wanted_level_increase = lowest_non_zero_wanted_gained;
+            }
+
+            if (event.rivals_override == null) {
+                event.rivals_override = rivals_override;
+                event.rival_template_override_tag_id = 31;
             }
         }
     }
