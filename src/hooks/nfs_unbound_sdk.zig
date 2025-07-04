@@ -517,6 +517,12 @@ pub const ArchetypeData = enum(c_uint) {
     sleeper = 6,
 };
 
+pub const ItemLocation = enum(c_uint) {
+    front = 0,
+    rear = 1,
+    none = 2,
+};
+
 pub const ItemDataId = extern struct {
     id: u32,
 };
@@ -696,7 +702,7 @@ pub const RaceVehicleItemData = WithInheritance(&.{GstControllableItemData.c}, e
 }, 0x04C804C8);
 
 pub const PreCustomizedDealershipVehicleItemData = WithInheritance(&.{RaceItemData.c}, extern struct {
-    base_vehicle: ?*anyopaque,
+    base_vehicle: ?*RaceVehicleItemData.c,
     customizations: ?*anyopaque,
     post_customizations: ?*anyopaque,
     max_hp: i32,
@@ -708,6 +714,94 @@ pub const PreCustomizedDealershipVehicleItemData = WithInheritance(&.{RaceItemDa
     top_speed_mph: i32,
     zero_to_sixty: f32,
 }, 0x05360536);
+
+pub const TemplateItemData = WithInheritance(&.{RaceItemData.c}, extern struct {
+    types_to_remove: ?*anyopaque,
+    property_modifications: ?*anyopaque,
+}, 0x0540053D);
+
+pub const CustomizationItemData = WithInheritance(&.{RaceItemData.c}, extern struct {
+    performance_modifier: ?*anyopaque,
+    mesh_blueprint_permutations: ?*anyopaque,
+    performance_modifier_index: u32,
+    uses_item_constraints: bool,
+    is_player_facing: bool,
+    wide_collision: bool,
+}, 0x00);
+
+pub const VisualCustomizationItemData = WithInheritance(&.{CustomizationItemData.c}, extern struct {}, 0x00);
+
+pub const SpatialCustomizationItemData = WithInheritance(&.{VisualCustomizationItemData.c}, extern struct {
+    location: ItemLocation,
+}, 0x00);
+
+pub const TrunkLidItemData = WithInheritance(&.{VisualCustomizationItemData.c}, extern struct {}, 0x05290529);
+
+pub const BumperItemData = WithInheritance(&.{SpatialCustomizationItemData.c}, extern struct {}, 0x05110511);
+
+pub const DiffuserItemData = WithInheritance(&.{VisualCustomizationItemData.c}, extern struct {}, 0x05180518);
+
+pub const ExhaustItemAudioData = extern struct {
+    exhaust_tip_length: i32,
+    exhaust_tip_girth: i32,
+};
+
+pub const ExhaustItemData = WithInheritance(&.{VisualCustomizationItemData.c}, extern struct {
+    audio: ExhaustItemAudioData,
+}, 0x05150515);
+
+pub const FendersItemData = WithInheritance(&.{SpatialCustomizationItemData.c}, extern struct {
+    inner_diameter_override: f32,
+    wheel_diameter_override: f32,
+    max_trackwidth: f32,
+    rim_width: f32,
+    max_body_y_offset: f32,
+    override_rim_width: bool,
+}, 0x05140514);
+
+pub const GrilleItemData = WithInheritance(&.{VisualCustomizationItemData.c}, extern struct {}, 0x05260526);
+
+pub const LightsItemData = WithInheritance(&.{SpatialCustomizationItemData.c}, extern struct {
+    light_set_id: u32,
+    animation_extent: f32,
+    tint: Vec3,
+    light_color: Vec3,
+    use_custom_light_color: bool,
+}, 0x050F050F);
+
+pub const HoodItemData = WithInheritance(&.{VisualCustomizationItemData.c}, extern struct {}, 0x05220522);
+
+pub const WingMirrorsItemData = WithInheritance(&.{VisualCustomizationItemData.c}, extern struct {}, 0x05200520);
+
+pub const RoofItemData = WithInheritance(&.{VisualCustomizationItemData.c}, extern struct {}, 0x051F051F);
+
+pub const SideSkirtsItemData = WithInheritance(&.{VisualCustomizationItemData.c}, extern struct {}, 0x05230523);
+
+pub const SplitterItemData = WithInheritance(&.{VisualCustomizationItemData.c}, extern struct {}, 0x05190519);
+
+pub const SpoilerItemData = WithInheritance(&.{VisualCustomizationItemData.c}, extern struct {
+    spoiler_tuning: ?*anyopaque,
+    animation_id: i32,
+    global_asset_list_index: u32,
+    animation_extent: f32,
+}, 0x05250525);
+
+pub const RimsItemData = WithInheritance(&.{SpatialCustomizationItemData.c}, extern struct {
+    size_options: ?*List(f32),
+    secondary_material: Vec3,
+    secondary_paint: Vec3,
+    primary_material: Vec3,
+    primary_paint: Vec3,
+    brake_disc_x_offset: f32,
+    diameter: f32,
+    rim_selection: u32,
+    radial_blur_thickness: f32,
+    lip_size: f32,
+    width: f32,
+    brake_disc_ratio: f32,
+    double_sided_radial_blur: bool,
+    allow_width_override: bool,
+}, 0x050D050D);
 
 // pub const RaceVehicleItemData = extern struct {
 //     vtable: ?*anyopaque,

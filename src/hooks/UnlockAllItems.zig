@@ -327,6 +327,8 @@ pub fn init(detour: *ba.Detour) !void {
     try hookTo(detour, module.start + 0x25A1737, @intFromPtr(&resourceConstructHookFn));
     // NeedForSpeedUnbound.exe+2313424 - 48 8B 57 08           - mov rdx,[rdi+08]
     try hookTo(detour, module.start + 0x2313424, @intFromPtr(&resourceMetadataCheckHookFn));
+
+    try unlock_vehicles.init();
 }
 
 fn hookTo(detour: *ba.Detour, hook_target: usize, hook_fn_start: usize) !void {
@@ -343,8 +345,6 @@ fn hookTo(detour: *ba.Detour, hook_target: usize, hook_fn_start: usize) !void {
     const hook_fn_end = search_ctx.result.getLast().start;
 
     _ = try ba.Detour.emitJmp(hook_fn_end, attached_info.trampoline, null);
-
-    try unlock_vehicles.init();
 }
 
 /// Cleans up resources allocated by the *UnlockAllItems* hook
@@ -388,41 +388,49 @@ const unlock_vehicles = struct {
         "Items/Bike_",
         "items/copcars/",
         "Items/secondhand_vehicles/",
-        "items/car_porsche_carreras_2014/PlayerCopCar_",
+        "items/trafficcars/",
     };
     const interested_asset_contains = [_][]const u8{
         "PlayerCopCar_",
+        "copcar_",
+        "car_bmw_m3e46gtr_2003_razernfsmwdistressed",
+        "car_tools_thumbnails_2022",
     };
 
     fn init() !void {
-        vehicles_list = try sdk.List(*sdk.RaceItemData.c).new(allocator, max_vehicles);
+        vehicles_list = try .new(allocator, max_vehicles);
         vehicles_set = .init(allocator);
     }
 
-    fn add(vehicle: *sdk.RaceItemData.c) !void {
+    fn add(vehicle: anytype) !void {
         mutex.lock();
         defer mutex.unlock();
+
+        const VehicleType = @TypeOf(vehicle);
+        if (VehicleType == *sdk.RaceVehicleItemData.c or
+            VehicleType == *sdk.PreCustomizedDealershipVehicleItemData.c)
+        {
+            try vehicles_set.put(@ptrCast(vehicle), {});
+        } else if (VehicleType == *sdk.RaceItemData.c) {
+            try vehicles_set.put(vehicle, {});
+        } else @compileError("Unknown vehicle type: " ++ @typeName(VehicleType));
 
         vehicle.unlock_asset_mp_cop = null;
         vehicle.unlock_asset_sp = null;
         vehicle.unlock_asset_mp = null;
         vehicle.purchasable = true;
-
-        try vehicles_set.put(vehicle, {});
     }
 
     fn finalize() void {
         mutex.lock();
         defer mutex.unlock();
 
-        if (vehicles_set.count() == 0) return;
-
         removal: while (true) {
             const vehicles = vehicles_set.keys();
             for (0.., vehicles) |i, vehicle| {
                 const raw_ptr = @intFromPtr(vehicle);
                 if (raw_ptr == 0) {
-                    std.debug.print("Ptr 0? {}\n", .{i});
+                    std.debug.print(": Ptr 0? {}\n", .{i});
                     _ = vehicles_set.swapRemoveAt(i);
                     continue :removal;
                 } else if (!sdk.ResourceObject.isValidObject(@ptrCast(vehicle))) {
@@ -434,24 +442,25 @@ const unlock_vehicles = struct {
             break;
         }
 
-        const max_size: usize = @min(vehicles_set.count(), max_vehicles);
+        if (vehicles_set.count() == 0) return;
+
         // we expand since we should have enough space, then we copy
-        vehicles_list.setSize(max_vehicles);
-        vehicles_list.copySlice(vehicles_set.keys()[0..max_size]);
+        const max_size: usize = @min(vehicles_set.count(), max_vehicles);
         vehicles_list.setSize(@truncate(max_size));
+        vehicles_list.copySlice(vehicles_set.keys());
     }
 
     fn unlockDefaultVehicles(asset: *sdk.VehicleProgressionAsset.c) !void {
         const default_vehicles = asset.default_unlocked_vehicles.span();
         for (default_vehicles) |race_vehicle| {
-            try add(@ptrCast(race_vehicle));
+            try add(race_vehicle);
         }
 
         const vehicles = asset.vehicles.span();
         for (vehicles) |*vehicle| {
             const unlocked_vehicles = vehicle.unlocked_vehicles.span();
             for (unlocked_vehicles) |race_vehicle| {
-                try add(@ptrCast(race_vehicle));
+                try add(race_vehicle);
             }
             vehicle.unlock = null;
         }
@@ -489,14 +498,14 @@ const unlock_vehicles = struct {
             if (!checkVehicleAssetName(item)) {
                 return;
             }
-            try add(@ptrCast(item));
+            try add(item);
             return;
         }
         if (sdk.PreCustomizedDealershipVehicleItemData.from(regs.r15)) |item| {
             if (!checkVehicleAssetName(item)) {
                 return;
             }
-            try add(@ptrCast(item));
+            try add(item);
             return;
         }
 
@@ -504,26 +513,28 @@ const unlock_vehicles = struct {
             if (!checkVehicleAssetName(item)) {
                 return;
             }
-            try add(@ptrCast(item));
+            try add(item);
             return;
         }
         if (sdk.RaceVehicleItemData.from(regs.r15)) |item| {
             if (!checkVehicleAssetName(item)) {
                 return;
             }
-            try add(@ptrCast(item));
+            try add(item);
             return;
         }
+
+        return error.NotValidObject;
     }
 
     fn processMetadataCheck(regs: *GeneralRegisters) !void {
         if (sdk.PreCustomizedDealershipVehicleItemData.from(regs.rdi)) |item| {
-            try add(@ptrCast(item));
+            try add(item);
             return;
         }
 
         if (sdk.RaceVehicleItemData.from(regs.rdi)) |item| {
-            try add(@ptrCast(item));
+            try add(item);
             return;
         }
 
@@ -531,6 +542,62 @@ const unlock_vehicles = struct {
             try unlockDefaultVehicles(asset);
             return;
         }
+
+        return error.NotValidObject;
+    }
+};
+
+const unlock_visualitems = struct {
+    const visualitem_types = [_]type{
+        sdk.TrunkLidItemData,
+        sdk.BumperItemData,
+        sdk.DiffuserItemData,
+        sdk.ExhaustItemData,
+        sdk.FendersItemData,
+        sdk.GrilleItemData,
+        sdk.LightsItemData,
+        sdk.HoodItemData,
+        sdk.WingMirrorsItemData,
+        sdk.RoofItemData,
+        sdk.SideSkirtsItemData,
+        sdk.SplitterItemData,
+        sdk.SpoilerItemData,
+        sdk.RimsItemData,
+    };
+
+    fn processResourceConstruct(regs: *GeneralRegisters) !void {
+        inline for (visualitem_types) |VisualItemType| {
+            if (VisualItemType.from(regs.rsi)) |item| {
+                item.unlock_asset_mp_cop = null;
+                item.unlock_asset_sp = null;
+                item.unlock_asset_mp = null;
+                item.purchasable = true;
+                return;
+            }
+            if (VisualItemType.from(regs.r15)) |item| {
+                item.unlock_asset_mp_cop = null;
+                item.unlock_asset_sp = null;
+                item.unlock_asset_mp = null;
+                item.purchasable = true;
+                return;
+            }
+        }
+
+        return error.NotValidObject;
+    }
+
+    fn processMetadataCheck(regs: *GeneralRegisters) !void {
+        inline for (visualitem_types) |VisualItemType| {
+            if (VisualItemType.from(regs.rdi)) |item| {
+                item.unlock_asset_mp_cop = null;
+                item.unlock_asset_sp = null;
+                item.unlock_asset_mp = null;
+                item.purchasable = true;
+                return;
+            }
+        }
+
+        return error.NotValidObject;
     }
 };
 
@@ -546,9 +613,44 @@ fn onLoadingScene(regs: *GeneralRegisters) callconv(.c) void {
 }
 
 fn onResourceConstruct(regs: *GeneralRegisters) callconv(.c) void {
-    unlock_vehicles.processResourceConstruct(regs) catch {};
+    if (unlock_vehicles.processResourceConstruct(regs)) {
+        return;
+    } else |_| {}
+
+    if (unlock_visualitems.processResourceConstruct(regs)) {
+        return;
+    } else |_| {}
+
+    if (sdk.TemplateItemData.from(regs.rsi)) |item| {
+        item.unlock_asset_mp_cop = null;
+        item.unlock_asset_sp = null;
+        item.unlock_asset_mp = null;
+        item.purchasable = true;
+        return;
+    }
+    if (sdk.TemplateItemData.from(regs.r15)) |item| {
+        item.unlock_asset_mp_cop = null;
+        item.unlock_asset_sp = null;
+        item.unlock_asset_mp = null;
+        item.purchasable = true;
+        return;
+    }
 }
 
 fn onResourceMetadataCheck(regs: *GeneralRegisters) callconv(.c) void {
-    unlock_vehicles.processMetadataCheck(regs) catch {};
+    if (unlock_vehicles.processMetadataCheck(regs)) {
+        return;
+    } else |_| {}
+
+    if (unlock_visualitems.processMetadataCheck(regs)) {
+        return;
+    } else |_| {}
+
+    if (sdk.TemplateItemData.from(regs.rdi)) |item| {
+        item.unlock_asset_mp_cop = null;
+        item.unlock_asset_sp = null;
+        item.unlock_asset_mp = null;
+        item.purchasable = true;
+        return;
+    }
 }
