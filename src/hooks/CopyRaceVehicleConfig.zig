@@ -279,14 +279,44 @@ fn resourceConstructHookFn() callconv(.naked) noreturn {
     );
 }
 
-fn resourceItemDataHookFn() callconv(.naked) noreturn {
+fn resourceMetadataCheckHookFn() callconv(.naked) noreturn {
     @setRuntimeSafety(false);
 
     asm volatile (stack_state_saver.save_call_hook_template
         :
-        : [onHook] "X" (&onResourceItemData),
+        : [onHook] "X" (&onResourceMetadataCheck),
         : "memory", "cc"
     );
+
+    // our special signature to detect end of function, too lazy to detect with other means :)
+    asm volatile (
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+    );
+}
+
+fn resourceItemDataHookFn() callconv(.naked) noreturn {
+    @setRuntimeSafety(false);
+
+    // asm volatile (stack_state_saver.save_call_hook_template
+    //     :
+    //     : [onHook] "X" (&onResourceItemData),
+    //     : "memory", "cc"
+    // );
 
     // our special signature to detect end of function, too lazy to detect with other means :)
     asm volatile (
@@ -325,9 +355,10 @@ pub fn init(detour: *ba.Detour) !void {
     try hookTo(detour, module.start + 0x220FA36, @intFromPtr(&loadingSceneHookFn));
     // on resource constructor call,  resource->vtable[0](resource), vtable's first function
     try hookTo(detour, module.start + 0x25A1737, @intFromPtr(&resourceConstructHookFn));
-    // NeedForSpeedUnbound.exe+1368FDA - 48 8B 10              - mov rdx,[rax]
     // NeedForSpeedUnbound.exe+137A356 - 48 8B 10              - mov rdx,[rax]
     // try hookTo(detour, module.start + 0x137A356, @intFromPtr(&resourceItemDataHookFn));
+    // NeedForSpeedUnbound.exe+2313424 - 48 8B 57 08           - mov rdx,[rdi+08]
+    try hookTo(detour, module.start + 0x2313424, @intFromPtr(&resourceMetadataCheckHookFn));
 }
 
 fn hookTo(detour: *ba.Detour, hook_target: usize, hook_fn_start: usize) !void {
@@ -605,7 +636,18 @@ fn copyBasedOnConfig(config: anytype, from: anytype, to: anytype) !void {
     }
 }
 
-fn CopyState(comptime T: type) type {
+fn CopyState(comptime OT: type) type {
+    const T = if (@hasDecl(OT, "c")) OT.c else OT;
+    const isValid: fn (*const T) bool = OT.isValid;
+    const fromAddress: fn (usize) ?*T = if (@hasDecl(T, "from")) T.from else struct {
+        fn from(ptr: usize) ?*T {
+            const c_opt_ptr: ?*T = @ptrFromInt(ptr);
+            const c_ptr = c_opt_ptr orelse return null;
+            if (!isValid(c_ptr)) return null;
+            return c_ptr;
+        }
+    }.from;
+
     return struct {
         from_ident: []const u8,
         to_ident: []const u8,
@@ -620,9 +662,9 @@ fn CopyState(comptime T: type) type {
             self.tos.clearRetainingCapacity();
         }
 
-        fn populateHashSet(self: *Self, data_ptr: ?*T) bool {
-            const data = data_ptr orelse return false;
-            if (!data.isValid()) return false;
+        fn populateHashSet(self: *Self, ptr: usize) bool {
+            const data = fromAddress(ptr) orelse return false;
+            if (!isValid(data)) return false;
 
             const asset_name = std.mem.span(data.asset_name);
             if (std.ascii.eqlIgnoreCase(asset_name, self.from_ident)) {
@@ -695,13 +737,13 @@ fn CopyState(comptime T: type) type {
         }
 
         fn isFrom(self: Self, data: *T) bool {
-            if (!data.isValid()) return false;
+            if (!isValid(data)) return false;
             const asset_name = std.mem.span(data.asset_name);
             return std.ascii.eqlIgnoreCase(asset_name, self.from_ident);
         }
 
         fn isTo(self: Self, data: *T) bool {
-            if (!data.isValid()) return false;
+            if (!isValid(data)) return false;
             const asset_name = std.mem.span(data.asset_name);
             return std.ascii.eqlIgnoreCase(asset_name, self.to_ident);
         }
@@ -924,6 +966,45 @@ var race_vehicle_copies = [_]CopyRaceVechicle{
         },
     },
 };
+
+var engine_structure_copies = [_]CopyState(EngineStructureItemData){
+    .{
+        .from_ident = "items/performanceitems/engines/car_ford_mustangboss302_1969_enginestructure",
+        .to_ident = "items/performanceitems/engines/car_bmw_m3e46gtr_2003_razernfsmw_enginestructure",
+        .config = fullCopyConfigable(EngineStructureItemData, .{
+            // .ui_sort_index = ConfigableAction(u32).skip,
+            .asset_name = ConfigableAction([*:0]const u8).skip,
+            .item_ui = ConfigableAction(?*anyopaque).skip,
+            .id = ConfigableAction(u32).skip,
+            .engine_upgrade_index = ConfigableAction(u32).skip,
+        }),
+    },
+};
+
+var frame_copies = [_]CopyState(FrameItemData){
+    .{
+        .from_ident = "items/performanceitems/frames/car_audi_r8v10_2019_frame",
+        .to_ident = "items/performanceitems/frames/car_bmw_m3e46gtr_2003_razernfsmw_2003_frame",
+        .config = fullCopyConfigable(FrameItemData, .{
+            .asset_name = ConfigableAction([*:0]const u8).skip,
+            .item_ui = ConfigableAction(?*anyopaque).skip,
+            .id = ConfigableAction(u32).skip,
+        }),
+    },
+};
+
+var drive_train_copies = [_]CopyState(DriveTrainItemData){
+    .{
+        .from_ident = "items/performanceitems/drivetrains/car_audi_r8v10_2019_drivetrain",
+        .to_ident = "items/performanceitems/drivetrains/car_bmw_m3e46gtr_2003_razernfsmw_drivetrain",
+        .config = fullCopyConfigable(DriveTrainItemData, .{
+            .asset_name = ConfigableAction([*:0]const u8).skip,
+            .item_ui = ConfigableAction(?*anyopaque).skip,
+            .id = ConfigableAction(u32).skip,
+        }),
+    },
+};
+
 const EngineItems = std.AutoArrayHashMap(u32, *EngineStructureItemData);
 var engine_items = EngineItems.init(allocator);
 var skip_engine_items = [_]u32{
@@ -971,11 +1052,42 @@ fn onResourceConstruct(regs: *GeneralRegisters) callconv(.c) void {
     // const guid: [*]u8 = @ptrFromInt(regs.rdi - 0x10);
     // if (!std.mem.eql(u8, guid[0..16], &my_guid)) return;
     // std.debug.print("RaceConfigCopy hook called\n", .{});
+
+    // EngineStructure :)
+    {
+        const es_item_ptr1: ?*EngineStructureItemData = @ptrFromInt(regs.rsi);
+        const es_item_ptr2: ?*EngineStructureItemData = @ptrFromInt(regs.r15);
+        const es_item = blk: {
+            if (es_item_ptr1) |ptr| {
+                if (ptr.isValid()) {
+                    break :blk ptr;
+                }
+            }
+            if (es_item_ptr2) |ptr| {
+                if (ptr.isValid()) {
+                    break :blk ptr;
+                }
+            }
+            return;
+        };
+
+        const es_item_asset_name = std.mem.span(es_item.asset_name);
+        // At this point we probably don't have enough information to distinguish between "engine structure" items,
+        if (std.ascii.startsWithIgnoreCase(es_item_asset_name, "items/performanceitems/engines/")) {
+            mutex.lock();
+            defer mutex.unlock();
+
+            engine_items.put(es_item.id, es_item) catch return;
+        }
+    }
+}
+
+fn onResourceMetadataCheck(regs: *GeneralRegisters) callconv(.c) void {
     mutex.lock();
     defer mutex.unlock();
 
     for (&engine_data_copies) |*copy| {
-        const found = copy.populateHashSet(@ptrFromInt(regs.rsi));
+        const found = copy.populateHashSet(regs.rdi);
         _ = copy.performCopy();
         if (found) {
             return;
@@ -983,18 +1095,19 @@ fn onResourceConstruct(regs: *GeneralRegisters) callconv(.c) void {
     }
 
     for (&race_vehicle_copies) |*copy| {
-        const found = copy.config_copy.populateHashSet(@ptrFromInt(regs.rsi)) or
-            copy.item_copy.populateHashSet(@ptrFromInt(regs.rsi));
+        const found = copy.config_copy.populateHashSet(regs.rdi) or
+            copy.item_copy.populateHashSet(regs.rdi);
         copy.performConfigCopy();
         if (found) {
             std.debug.print("Found items: froms: {} tos: {}\n", .{ copy.item_copy.froms.count(), copy.item_copy.tos.count() });
             std.debug.print("total performanceitems engins: {}\n", .{engine_items.count()});
+            copy.performItemCopy(engine_items, &skip_engine_items);
             return;
         }
     }
 
     for (&frame_copies) |*copy| {
-        const found = copy.populateHashSet(@ptrFromInt(regs.rsi));
+        const found = copy.populateHashSet(regs.rdi);
         _ = copy.performCopy();
         if (found) {
             return;
@@ -1002,100 +1115,15 @@ fn onResourceConstruct(regs: *GeneralRegisters) callconv(.c) void {
     }
 
     for (&drive_train_copies) |*copy| {
-        const found = copy.populateHashSet(@ptrFromInt(regs.rsi));
+        const found = copy.populateHashSet(regs.rdi);
         _ = copy.performCopy();
         if (found) {
             return;
         }
     }
-
-    // EngineStructure :)
-    {
-        const es_item_ptr: ?*EngineStructureItemData = @ptrFromInt(regs.rsi);
-        const es_item = es_item_ptr orelse return;
-        if (!es_item.isValid()) return;
-        for (&engine_structure_copies) |*copy| {
-            const found = copy.populateHashSet(es_item);
-            _ = copy.performCopy();
-            if (found) {
-                engine_items.put(es_item.id, es_item) catch return;
-                for (&race_vehicle_copies) |*copy_item| {
-                    copy_item.performItemCopy(engine_items, &skip_engine_items);
-                }
-                return;
-            }
-        }
-        const es_item_asset_name = std.mem.span(es_item.asset_name);
-        // At this point we probably don't have enough information to distinguish between "engine structure" items,
-        if (std.ascii.startsWithIgnoreCase(es_item_asset_name, "items/performanceitems/engines/")) {
-            engine_items.put(es_item.id, es_item) catch return;
-            for (&race_vehicle_copies) |*copy| {
-                copy.performItemCopy(engine_items, &skip_engine_items);
-            }
-        }
-    }
-}
-
-var engine_structure_copies = [_]CopyState(EngineStructureItemData){
-    .{
-        .from_ident = "items/performanceitems/engines/car_ford_mustangboss302_1969_enginestructure",
-        .to_ident = "items/performanceitems/engines/car_bmw_m3e46gtr_2003_razernfsmw_enginestructure",
-        .config = fullCopyConfigable(EngineStructureItemData, .{
-            // .ui_sort_index = ConfigableAction(u32).skip,
-            .asset_name = ConfigableAction([*:0]const u8).skip,
-            .item_ui = ConfigableAction(?*anyopaque).skip,
-            .id = ConfigableAction(u32).skip,
-            .engine_upgrade_index = ConfigableAction(u32).skip,
-        }),
-    },
-};
-
-var frame_copies = [_]CopyState(FrameItemData){
-    .{
-        .from_ident = "items/performanceitems/frames/car_audi_r8v10_2019_frame",
-        .to_ident = "items/performanceitems/frames/car_bmw_m3e46gtr_2003_razernfsmw_2003_frame",
-        .config = fullCopyConfigable(FrameItemData, .{
-            .asset_name = ConfigableAction([*:0]const u8).skip,
-            .item_ui = ConfigableAction(?*anyopaque).skip,
-            .id = ConfigableAction(u32).skip,
-        }),
-    },
-};
-
-var drive_train_copies = [_]CopyState(DriveTrainItemData){
-    .{
-        .from_ident = "items/performanceitems/drivetrains/car_audi_r8v10_2019_drivetrain",
-        .to_ident = "items/performanceitems/drivetrains/car_bmw_m3e46gtr_2003_razernfsmw_drivetrain",
-        .config = fullCopyConfigable(DriveTrainItemData, .{
-            .asset_name = ConfigableAction([*:0]const u8).skip,
-            .item_ui = ConfigableAction(?*anyopaque).skip,
-            .id = ConfigableAction(u32).skip,
-        }),
-    },
-};
-
-fn onResourceItemData(regs: *GeneralRegisters) callconv(.c) void {
-    mutex.lock();
-    defer mutex.unlock();
 
     for (&engine_structure_copies) |*copy| {
-        const found = copy.populateHashSet(@ptrFromInt(regs.rax));
-        _ = copy.performCopy();
-        if (found) {
-            return;
-        }
-    }
-
-    for (&frame_copies) |*copy| {
-        const found = copy.populateHashSet(@ptrFromInt(regs.rax));
-        _ = copy.performCopy();
-        if (found) {
-            return;
-        }
-    }
-
-    for (&drive_train_copies) |*copy| {
-        const found = copy.populateHashSet(@ptrFromInt(regs.rax));
+        const found = copy.populateHashSet(regs.rdi);
         _ = copy.performCopy();
         if (found) {
             return;

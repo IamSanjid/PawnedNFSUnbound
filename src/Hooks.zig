@@ -59,9 +59,14 @@ pub fn init() !void {
 
     // Auto-Generated!!!
     // try @import("hooks/RandomHooks.zig").init(&detour.?);
+
+    // Auto-Generated!!!
+    try @import("hooks/UnlockAllItems.zig").init(&detour.?);
 }
 
 pub fn deinit() void {
+    // Auto-Generated!!!
+    @import("hooks/UnlockAllItems.zig").deinit();
     // Auto-Generated!!!
     // @import("hooks/RandomHooks.zig").deinit();
     // Auto-Generated!!!

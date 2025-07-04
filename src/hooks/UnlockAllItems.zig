@@ -219,12 +219,72 @@ const stack_state_saver = struct {
     , .{});
 };
 
-fn hookFn() callconv(.naked) noreturn {
+fn loadingSceneHookFn() callconv(.naked) noreturn {
     @setRuntimeSafety(false);
 
     asm volatile (stack_state_saver.save_call_hook_template
         :
-        : [onHook] "X" (&onHook),
+        : [onHook] "X" (&onLoadingScene),
+        : "memory", "cc"
+    );
+
+    // our special signature to detect end of function, too lazy to detect with other means :)
+    asm volatile (
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+    );
+}
+
+fn resourceConstructHookFn() callconv(.naked) noreturn {
+    @setRuntimeSafety(false);
+
+    asm volatile (stack_state_saver.save_call_hook_template
+        :
+        : [onHook] "X" (&onResourceConstruct),
+        : "memory", "cc"
+    );
+
+    // our special signature to detect end of function, too lazy to detect with other means :)
+    asm volatile (
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+        \\ nop
+        \\ int $3
+    );
+}
+
+fn resourceMetadataCheckHookFn() callconv(.naked) noreturn {
+    @setRuntimeSafety(false);
+
+    asm volatile (stack_state_saver.save_call_hook_template
+        :
+        : [onHook] "X" (&onResourceMetadataCheck),
         : "memory", "cc"
     );
 
@@ -254,15 +314,19 @@ const allocator = arena.allocator();
 
 var scanner = ba.aob.Scanner.init(allocator);
 
-/// Initializes the *${HOOK_NAME}* hook with the given detour context.
+/// Initializes the *UnlockAllItems* hook with the given detour context.
 pub fn init(detour: *ba.Detour) !void {
     _ = arena.reset(.free_all);
 
     const module = try ba.windows.getModuleInfo(allocator, base_module);
     defer module.deinit(allocator);
 
-    // hook offset in the module
-    try hookTo(detour, module.start + ${HOOK_OFFSET}, @intFromPtr(&hookFn));
+    // NeedForSpeedUnbound.exe+220FA36 - 48 8B C8              - mov rcx,rax
+    try hookTo(detour, module.start + 0x220FA36, @intFromPtr(&loadingSceneHookFn));
+    // on resource constructor call,  resource->vtable[0](resource), vtable's first function
+    try hookTo(detour, module.start + 0x25A1737, @intFromPtr(&resourceConstructHookFn));
+    // NeedForSpeedUnbound.exe+2313424 - 48 8B 57 08           - mov rdx,[rdi+08]
+    try hookTo(detour, module.start + 0x2313424, @intFromPtr(&resourceMetadataCheckHookFn));
 }
 
 fn hookTo(detour: *ba.Detour, hook_target: usize, hook_fn_start: usize) !void {
@@ -279,18 +343,212 @@ fn hookTo(detour: *ba.Detour, hook_target: usize, hook_fn_start: usize) !void {
     const hook_fn_end = search_ctx.result.getLast().start;
 
     _ = try ba.Detour.emitJmp(hook_fn_end, attached_info.trampoline, null);
+
+    try unlock_vehicles.init();
 }
 
-/// Cleans up resources allocated by the *${HOOK_NAME}* hook
+/// Cleans up resources allocated by the *UnlockAllItems* hook
 pub fn deinit() void {
     _ = arena.reset(.free_all);
     arena.deinit();
 }
 
 pub const hook_fn_end_signature = [_]u8{ 0x90, 0xCC } ** 8;
-pub const name = "${HOOK_NAME}";
-pub const base_module = "${HOOK_BASE_MODULE}";
+pub const name = "UnlockAllItems";
+pub const base_module = "NeedForSpeedUnbound.exe";
 
-fn onHook(regs: *GeneralRegisters) callconv(.c) void {
-    std.debug.print("On {s} hook! Regs: 0x{X}\n", .{ name, @intFromPtr(regs) });
+const sdk = @import("nfs_unbound_sdk.zig");
+
+var mutex: std.Thread.Mutex = .{};
+
+fn startsWithIgnoreCaseAny(asset_name: []const u8, prefixes: []const []const u8) bool {
+    for (prefixes) |prefix| {
+        if (std.ascii.startsWithIgnoreCase(asset_name, prefix)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn containsIgnoreCaseAny(asset_name: []const u8, contains: []const []const u8) bool {
+    for (contains) |contain| {
+        if (std.ascii.indexOfIgnoreCase(asset_name, contain)) |_| {
+            return true;
+        }
+    }
+    return false;
+}
+
+const unlock_vehicles = struct {
+    const max_vehicles: u32 = 1000;
+    var vehicles_list: *sdk.List(*sdk.RaceItemData.c) = undefined;
+    var vehicles_set: std.AutoArrayHashMap(*sdk.RaceItemData.c, void) = undefined;
+
+    const interested_asset_prefixes = [_][]const u8{
+        "Items/Bike_",
+        "items/copcars/",
+        "Items/secondhand_vehicles/",
+        "items/car_porsche_carreras_2014/PlayerCopCar_",
+    };
+    const interested_asset_contains = [_][]const u8{
+        "PlayerCopCar_",
+    };
+
+    fn init() !void {
+        vehicles_list = try sdk.List(*sdk.RaceItemData.c).new(allocator, max_vehicles);
+        vehicles_set = .init(allocator);
+    }
+
+    fn add(vehicle: *sdk.RaceItemData.c) !void {
+        mutex.lock();
+        defer mutex.unlock();
+
+        vehicle.unlock_asset_mp_cop = null;
+        vehicle.unlock_asset_sp = null;
+        vehicle.unlock_asset_mp = null;
+        vehicle.purchasable = true;
+
+        try vehicles_set.put(vehicle, {});
+    }
+
+    fn finalize() void {
+        mutex.lock();
+        defer mutex.unlock();
+
+        if (vehicles_set.count() == 0) return;
+
+        removal: while (true) {
+            const vehicles = vehicles_set.keys();
+            for (0.., vehicles) |i, vehicle| {
+                const raw_ptr = @intFromPtr(vehicle);
+                if (raw_ptr == 0) {
+                    std.debug.print("Ptr 0? {}\n", .{i});
+                    _ = vehicles_set.swapRemoveAt(i);
+                    continue :removal;
+                } else if (!sdk.ResourceObject.isValidObject(@ptrCast(vehicle))) {
+                    _ = vehicles_set.swapRemoveAt(i);
+                    continue :removal;
+                }
+            }
+
+            break;
+        }
+
+        const max_size: usize = @min(vehicles_set.count(), max_vehicles);
+        // we expand since we should have enough space, then we copy
+        vehicles_list.setSize(max_vehicles);
+        vehicles_list.copySlice(vehicles_set.keys()[0..max_size]);
+        vehicles_list.setSize(@truncate(max_size));
+    }
+
+    fn unlockDefaultVehicles(asset: *sdk.VehicleProgressionAsset.c) !void {
+        const default_vehicles = asset.default_unlocked_vehicles.span();
+        for (default_vehicles) |race_vehicle| {
+            try add(@ptrCast(race_vehicle));
+        }
+
+        const vehicles = asset.vehicles.span();
+        for (vehicles) |*vehicle| {
+            const unlocked_vehicles = vehicle.unlocked_vehicles.span();
+            for (unlocked_vehicles) |race_vehicle| {
+                try add(@ptrCast(race_vehicle));
+            }
+            vehicle.unlock = null;
+        }
+
+        finalize();
+
+        asset.default_unlocked_vehicles = vehicles_list;
+        std.debug.print("UnlockAllItems: Unlocked {} vehicles of 0x{X}\n", .{
+            asset.default_unlocked_vehicles.count(),
+            @intFromPtr(asset),
+        });
+    }
+
+    inline fn checkVehicleAssetName(item: anytype) bool {
+        const asset_name = std.mem.span(item.asset_name);
+        if (!startsWithIgnoreCaseAny(asset_name, &interested_asset_prefixes) and
+            !containsIgnoreCaseAny(asset_name, &interested_asset_contains))
+        {
+            return false;
+        }
+        return true;
+    }
+
+    fn processResourceConstruct(regs: *GeneralRegisters) !void {
+        if (sdk.VehicleProgressionAsset.from(regs.rsi)) |asset| {
+            try unlockDefaultVehicles(asset);
+            return;
+        }
+        if (sdk.VehicleProgressionAsset.from(regs.r15)) |asset| {
+            try unlockDefaultVehicles(asset);
+            return;
+        }
+
+        if (sdk.PreCustomizedDealershipVehicleItemData.from(regs.rsi)) |item| {
+            if (!checkVehicleAssetName(item)) {
+                return;
+            }
+            try add(@ptrCast(item));
+            return;
+        }
+        if (sdk.PreCustomizedDealershipVehicleItemData.from(regs.r15)) |item| {
+            if (!checkVehicleAssetName(item)) {
+                return;
+            }
+            try add(@ptrCast(item));
+            return;
+        }
+
+        if (sdk.RaceVehicleItemData.from(regs.rsi)) |item| {
+            if (!checkVehicleAssetName(item)) {
+                return;
+            }
+            try add(@ptrCast(item));
+            return;
+        }
+        if (sdk.RaceVehicleItemData.from(regs.r15)) |item| {
+            if (!checkVehicleAssetName(item)) {
+                return;
+            }
+            try add(@ptrCast(item));
+            return;
+        }
+    }
+
+    fn processMetadataCheck(regs: *GeneralRegisters) !void {
+        if (sdk.PreCustomizedDealershipVehicleItemData.from(regs.rdi)) |item| {
+            try add(@ptrCast(item));
+            return;
+        }
+
+        if (sdk.RaceVehicleItemData.from(regs.rdi)) |item| {
+            try add(@ptrCast(item));
+            return;
+        }
+
+        if (sdk.VehicleProgressionAsset.from(regs.rdi)) |asset| {
+            try unlockDefaultVehicles(asset);
+            return;
+        }
+    }
+};
+
+fn onLoadingScene(regs: *GeneralRegisters) callconv(.c) void {
+    _ = regs;
+
+    mutex.lock();
+    defer mutex.unlock();
+
+    _ = arena.reset(.free_all);
+
+    unlock_vehicles.init() catch {};
+}
+
+fn onResourceConstruct(regs: *GeneralRegisters) callconv(.c) void {
+    unlock_vehicles.processResourceConstruct(regs) catch {};
+}
+
+fn onResourceMetadataCheck(regs: *GeneralRegisters) callconv(.c) void {
+    unlock_vehicles.processMetadataCheck(regs) catch {};
 }

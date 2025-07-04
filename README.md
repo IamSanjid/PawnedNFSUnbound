@@ -10,8 +10,9 @@ Since I was testing with Need for Speed Unbound the framework is kind of tangled
   2. Copy Audi R8 Race Vehicle Config to Razor's BMW M3 GTR Race Vehicle Config
      * So, basically Razor's Custom BMW M3 GTR will pretty much behave(handle, accelerate, performance upgrades etc..) like Audi R8. Except the stock engine will still sound same.
      * Yes, it is possible to do this kind of "copy" from one car to any other car. If you play around for enough time you will find a way to do with current Source Code. If not open a discussion or something.
+  3. Unlocked almost all the cars including Bonus/Custom, Cop, Traffic cars and also bikes.
 
-## Build/Install/Dlls?
+## Build/Install Dlls?
 Last tested with `zig-x86_64-windows-0.15.0-dev.848+f3940ad85`.
   * `git clone https://github.com/IamSanjid/PawnedNFSUnbound.git`
   * `cd PawnedNFSUnbound && zig build all`
@@ -28,6 +29,8 @@ These command should build two DLL's one loader and another main, the loader nee
 Most of the things are marely reverse engineering issues just lazy to fix it.
 
 It seems the `EngineStructureItemData` doesn't get properly copied on resource loading, so you've to manually go to `Performance` choose the engine and then do a *handling* synchronization(just move any of the handling slider left and right).
+
+You need to "Find Game"/enter a lobby for things to get applied for online mode.
 
 Random crashes, when switching from one mode to another...
 

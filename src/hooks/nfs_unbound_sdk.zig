@@ -5,17 +5,35 @@ const max_ref_count: u32 = 10;
 
 // ========== General ==========
 
-pub const AssetMetadata = extern struct {
+pub const Metadata = extern struct {
     padding: [0x30]u8,
     id: u32,
 };
 
-pub const Vec3WithPadding = extern struct {
+pub const ResourceObject = extern struct {
+    vtable: ?*anyopaque,
+    metadata: ?*Metadata,
+    ref_count: u32,
+    int2: u32,
+
+    pub inline fn isValidObject(self: *const ResourceObject) bool {
+        return self.ref_count > 0 and
+            self.ref_count <= max_ref_count and
+            self.int2 & 0xB100 == 0xB100;
+    }
+};
+
+pub const DataContainerAssetPolicy = WithInheritance(&.{ResourceObject}, extern struct {
+    asset_name: [*:0]const u8,
+}, 0x00);
+
+pub const Vec3 = extern struct {
     x: f32,
     y: f32,
     z: f32,
-    padding: [4]u8,
 };
+
+pub const Vec3WithPadding = WithEndPadding(Vec3, 0x4);
 
 pub fn List(comptime T: type) type {
     return extern struct {
@@ -43,17 +61,36 @@ pub fn List(comptime T: type) type {
             return start_ptr[0..list_size];
         }
 
-        pub fn dupeWithExtra(self: *Self, allocator: std.mem.Allocator, extra: usize) ?*Self {
+        pub fn readonlySpan(self: *const Self) []const T {
+            const list_size = self.count();
+            if (list_size == 0) return &.{};
+            const start_ptr: [*]const T = @ptrCast(&self.start);
+            return start_ptr[0..list_size];
+        }
+
+        pub fn copySlice(self: *Self, slice: []const T) void {
+            std.debug.assert(slice.len <= self.count());
+            const dst = self.span()[0..slice.len];
+            @memcpy(dst, slice.ptr);
+        }
+
+        pub fn setSize(self: *Self, new_size: u32) void {
+            @setRuntimeSafety(false);
+            const size_ptr: *u32 = @ptrFromInt(@intFromPtr(self) - @sizeOf(u32));
+            size_ptr.* = new_size;
+        }
+
+        pub fn dupeWithExtra(self: *const Self, allocator: std.mem.Allocator, extra: usize) !*Self {
             const new_size = @as(u32, @truncate(self.count())) + @as(u32, @truncate(extra));
-            const new_list = Self.new(allocator, new_size) orelse return null;
-            @memcpy(new_list.span(), self.span());
+            const new_list = try Self.new(allocator, new_size);
+            @memcpy(new_list.span(), self.readonlySpan().ptr);
             return new_list;
         }
 
-        pub fn new(allocator: std.mem.Allocator, size: u32) ?*Self {
+        pub fn new(allocator: std.mem.Allocator, size: u32) !*Self {
             @setRuntimeSafety(false);
             const total_size = @sizeOf(u32) + @sizeOf(T) * size;
-            const raw = allocator.alignedAlloc(u8, .of(T), total_size) catch return null;
+            const raw = try allocator.alignedAlloc(u8, .of(T), total_size);
             const size_ptr: *u32 = @ptrFromInt(@intFromPtr(raw.ptr));
             size_ptr.* = size;
             return @ptrFromInt(@intFromPtr(raw.ptr) + @sizeOf(u32));
@@ -68,7 +105,7 @@ pub fn isListType(comptime T: type) bool {
     return true;
 }
 
-// ========== Event Related ==========
+// ========== Event/Progression/Campaign/Freedrive Related ==========
 
 pub const Tier = enum(c_uint) {
     d = 0,
@@ -82,7 +119,7 @@ pub const Tier = enum(c_uint) {
 
 pub const EventEconomyAsset = extern struct {
     vtable: ?*anyopaque,
-    metadata: ?*AssetMetadata,
+    metadata: ?*Metadata,
     ref_count: u32,
     int2: u32,
     asset_name: [*:0]u8,
@@ -148,7 +185,7 @@ pub const CalendarAvailability = extern struct {
 
 pub const ProgressionEventData = extern struct {
     vtable: ?*anyopaque,
-    metadata: ?*AssetMetadata,
+    metadata: ?*Metadata,
     ref_count: u32,
     int2: u32,
     hard: ?*anyopaque,
@@ -189,7 +226,7 @@ pub const ProgressionEventData = extern struct {
 
 pub const EventProgressionAsset = extern struct {
     vtable: ?*anyopaque,
-    metadata: ?*AssetMetadata,
+    metadata: ?*Metadata,
     ref_count: u32,
     int2: u32,
     asset_name: [*:0]u8,
@@ -205,6 +242,40 @@ pub const EventProgressionAsset = extern struct {
         return false;
     }
 };
+
+pub const UnlockAsset = extern struct {
+    vtable: ?*anyopaque,
+    metadata: ?*Metadata,
+    ref_count: u32,
+    int2: u32,
+    asset_name: [*:0]const u8,
+    debug_unlock_id: [*:0]const u8,
+    available_for_player: enum(c_uint) {
+        all = 0,
+        human_player_only = 1,
+        ai_only = 2,
+    },
+    identifier: u32,
+
+    const metadata_id: u32 = 0x05A0059F;
+    pub fn isValid(self: *const UnlockAsset) bool {
+        if (self.ref_count == 0 or self.ref_count > max_ref_count) return false;
+        if (self.metadata) |data| {
+            return data.id == metadata_id;
+        }
+        return false;
+    }
+};
+
+pub const VehicleProgressionData = extern struct {
+    unlock: ?*UnlockAsset,
+    unlocked_vehicles: *List(*RaceItemData.c),
+};
+
+pub const VehicleProgressionAsset = WithInheritance(&.{DataContainerAssetPolicy.c}, extern struct {
+    default_unlocked_vehicles: *List(*RaceItemData.c),
+    vehicles: *List(VehicleProgressionData),
+}, 0x05630563);
 
 // ========== Race Vehicle Related ==========
 
@@ -225,7 +296,7 @@ pub const RaceVehiclePerformanceModificationItemData = extern struct {
 
 pub const RaceVehiclePerformanceModifierData = extern struct {
     vtable: ?*anyopaque,
-    metadata: ?*AssetMetadata,
+    metadata: ?*Metadata,
     ref_count: u32,
     int2: u32,
     asset_name: [*:0]const u8,
@@ -234,7 +305,7 @@ pub const RaceVehiclePerformanceModifierData = extern struct {
 
 pub const RaceVehiclePerformanceUpgradeData = extern struct {
     vtable: ?*anyopaque,
-    metadata: ?*AssetMetadata,
+    metadata: ?*Metadata,
     ref_count: u32,
     int2: u32,
     asset_name: [*:0]const u8,
@@ -243,7 +314,7 @@ pub const RaceVehiclePerformanceUpgradeData = extern struct {
 
 pub const RaceVehicleChassisConfigData = extern struct {
     vtable: ?*anyopaque,
-    metadata: ?*AssetMetadata,
+    metadata: ?*Metadata,
     ref_count: u32,
     int2: u32,
     asset_name: [*:0]const u8,
@@ -269,7 +340,7 @@ pub const RaceVehicleChassisConfigData = extern struct {
 
 pub const RaceVehicleEngineConfigData = extern struct {
     vtable: ?*anyopaque,
-    metadata: ?*AssetMetadata,
+    metadata: ?*Metadata,
     ref_count: u32,
     int2: u32,
     asset_name: [*:0]const u8,
@@ -313,7 +384,7 @@ pub const RaceVehicleEngineConfigData = extern struct {
 
 pub const RaceVehicleEngineData = extern struct {
     vtable: ?*anyopaque,
-    metadata: ?*AssetMetadata,
+    metadata: ?*Metadata,
     ref_count: u32,
     int2: u32,
     asset_name: [*:0]const u8,
@@ -333,7 +404,7 @@ pub const RaceVehicleEngineData = extern struct {
 
 pub const RaceVehicleEngineUpgradesData = extern struct {
     vtable: ?*anyopaque,
-    metadata: ?*AssetMetadata,
+    metadata: ?*Metadata,
     ref_count: u32,
     int2: u32,
     asset_name: [*:0]const u8,
@@ -342,7 +413,7 @@ pub const RaceVehicleEngineUpgradesData = extern struct {
 
 pub const RaceVehicleConfigData = extern struct {
     vtable: ?*anyopaque,
-    metadata: ?*AssetMetadata,
+    metadata: ?*Metadata,
     ref_count: u32,
     int2: u32,
     asset_name: [*:0]const u8,
@@ -416,13 +487,43 @@ pub const RaceVehicleConfigData = extern struct {
 
 // ========== Item Data Related ==========
 
+pub const MarketplaceItemType = enum(c_uint) {
+    stackable = 0,
+    individual = 1,
+    count = 2,
+};
+
+pub const ItemGarage = enum(c_uint) {
+    racer = 0,
+    cop = 1,
+    count = 2,
+};
+
+pub const ItemRarity = enum(c_uint) {
+    none = 0,
+    common = 1,
+    rare = 2,
+    epic = 3,
+    legendary = 4,
+};
+
+pub const ArchetypeData = enum(c_uint) {
+    none = 0,
+    racer = 1,
+    drift = 2,
+    gymkhana = 3,
+    offroad = 4,
+    drag = 5,
+    sleeper = 6,
+};
+
 pub const ItemDataId = extern struct {
     id: u32,
 };
 
 pub const FrameItemData = extern struct {
     vtable: ?*anyopaque,
-    metadata: ?*AssetMetadata,
+    metadata: ?*Metadata,
     ref_count: u32,
     int2: u32,
     asset_name: [*:0]const u8,
@@ -452,7 +553,7 @@ pub const FrameItemData = extern struct {
 
 pub const DriveTrainItemData = extern struct {
     vtable: ?*anyopaque,
-    metadata: ?*AssetMetadata,
+    metadata: ?*Metadata,
     ref_count: u32,
     int2: u32,
     asset_name: [*:0]const u8,
@@ -482,7 +583,7 @@ pub const DriveTrainItemData = extern struct {
 
 pub const EngineStructureItemData = extern struct {
     vtable: ?*anyopaque,
-    metadata: ?*AssetMetadata,
+    metadata: ?*Metadata,
     ref_count: u32,
     int2: u32,
     asset_name: [*:0]const u8,
@@ -519,52 +620,290 @@ pub const EngineStructureItemData = extern struct {
     }
 };
 
-pub const RaceVehicleItemData = extern struct {
-    vtable: ?*anyopaque,
-    metadata: ?*AssetMetadata,
-    ref_count: u32,
-    int2: u32,
-    asset_name: [*:0]const u8,
+pub const ItemDataBase = WithInheritance(&.{DataContainerAssetPolicy.c}, extern struct {
     item_ui: ?*anyopaque,
     id: u32,
-    int3: u32,
+    deprecated: bool,
+}, 0x00);
+
+pub const GstItemData = WithInheritance(&.{ItemDataBase.c}, extern struct {
     subitems: ?*anyopaque,
-    padding1: [2]?*anyopaque,
+    additional_items: ?*anyopaque,
+    sorted_restrictions: ?*anyopaque,
     sorted_scope: ?*List(ItemDataId),
-    buy_price: u32,
-    int4: u32,
-    sell_price: u32,
-    bool1: bool,
-    bool2: bool,
-    bool3: bool,
-    purchaseable: bool,
-    padding2: [6]u32,
+    buy_price: i32,
+    quantity: i32,
+    sell_price: i32,
+    sellable: bool,
+    optional: bool,
+    is_consumable: bool,
+    purchasable: bool,
+}, 0x00);
+
+pub const MarketplaceMetaData = extern struct {
+    quantity_limit: u64,
+    item_type: MarketplaceItemType,
+    export_to_marketplace: bool,
+    item_type_overrideable: bool,
+    grantable: bool,
+    quantity_limit_overridable: bool,
+    consumable: bool,
+};
+pub const MarketplaceItemData = WithInheritance(&.{GstItemData.c}, extern struct {
+    marketplace_meta_data: MarketplaceMetaData,
     dynamic_marketplace_attribute_hashes: ?*anyopaque,
+}, 0x00);
+
+pub const NFSItemTags = extern struct {
     tags: ?*anyopaque,
     tags_id: ?*anyopaque,
     has_been_built: bool,
-    padding3: [0x3]u8,
-    padding4: [0x3]u32,
+};
+pub const NFSItemData = WithInheritance(&.{MarketplaceItemData.c}, extern struct {
+    categorization_tags: NFSItemTags,
+    unlock_asset_mp_cop: ?*anyopaque,
     brand_data: ?*anyopaque,
-    padding5: [0x2]?*anyopaque,
+    unlock_asset_sp: ?*anyopaque,
+    licensed_by: ?*anyopaque,
     unlock_asset_mp: ?*anyopaque,
-    padding6: [0x34]u8,
+    allowed_garages: u32,
+    awarded_garage: ItemGarage,
+    user_award_flags: i32,
+    rarity: ItemRarity,
+    use_mp_cop_unlock_asset: bool,
+    enable_item_scope_check_filter: bool,
+    is_mp: bool,
+}, 0x00);
+
+pub const RaceItemData = WithInheritance(&.{NFSItemData.c}, extern struct {
+    hidden_from_purchase_by_unlock: ?*anyopaque,
+    item_tags: ?*anyopaque,
+    ui_sort_index: u32,
+    super_archetype_exclusive_type: ArchetypeData,
+    allow_item_type_duplicates: bool,
+}, 0x00);
+
+pub const GstControllableItemData = WithInheritance(&.{RaceItemData.c}, extern struct {
     race_vehicle: ?*anyopaque,
     interaction_point_data: ?*anyopaque,
     category_items_count: ?*anyopaque,
-    padding7: [0x48]u8,
-    default_license_plate_text: [*:0]const u8,
+    is_loaner_car: bool,
+}, 0x00);
 
-    const metadata_id: u32 = 0x04C804C8;
-    pub fn isValid(self: *const RaceVehicleItemData) bool {
-        if (self.ref_count == 0 or self.ref_count > max_ref_count) return false;
-        if (self.int2 & 0xB100 != 0xB100) return false;
-        if (self.metadata) |data| {
-            return data.id == metadata_id;
-        }
-        return false;
+pub const RaceVehicleItemData = WithInheritance(&.{GstControllableItemData.c}, extern struct {
+    padding7: [0x44]u8,
+    default_license_plate_text: [*:0]const u8,
+}, 0x04C804C8);
+
+pub const PreCustomizedDealershipVehicleItemData = WithInheritance(&.{RaceItemData.c}, extern struct {
+    base_vehicle: ?*anyopaque,
+    customizations: ?*anyopaque,
+    post_customizations: ?*anyopaque,
+    max_hp: i32,
+    quarter_mile_time: f32,
+    max_torque: i32,
+    quarter_mile_mph: i32,
+    performance_tier: f32,
+    hundred_to_two_hundred: f32,
+    top_speed_mph: i32,
+    zero_to_sixty: f32,
+}, 0x05360536);
+
+// pub const RaceVehicleItemData = extern struct {
+//     vtable: ?*anyopaque,
+//     metadata: ?*AssetMetadata,
+//     ref_count: u32,
+//     int2: u32,
+//     asset_name: [*:0]const u8,
+//     // ItemDataBase
+//     item_ui: ?*anyopaque,
+//     id: u32,
+//     deprecated: bool,
+//     // padding: [3]u8,
+//     // GstItemData
+//     subitems: ?*anyopaque,
+//     additional_items: ?*anyopaque,
+//     sorted_restrictions: ?*anyopaque,
+//     sorted_scope: ?*List(ItemDataId),
+//     buy_price: i32,
+//     quantity: i32,
+//     sell_price: i32,
+//     sellable: bool,
+//     optional: bool,
+//     is_consumable: bool,
+//     purchasable: bool,
+//     // MarketplaceItemData
+//     marketplace_meta_data: MarketplaceMetaData,
+//     dynamic_marketplace_attribute_hashes: ?*anyopaque,
+//     // NFSItemData
+//     categorization_tags: NFSItemTags,
+//     unlock_asset_mp_cop: ?*anyopaque,
+//     brand_data: ?*anyopaque,
+//     unlock_asset_sp: ?*anyopaque,
+//     licensed_by: ?*anyopaque,
+//     unlock_asset_mp: ?*anyopaque,
+//     allowed_garages: u32,
+//     awarded_garage: ItemGarage,
+//     user_award_flags: i32,
+//     rarity: ItemRarity,
+//     use_mp_cop_unlock_asset: bool,
+//     enable_item_scope_check_filter: bool,
+//     is_mp: bool,
+//     // RaceItemData
+//     hidden_from_purchase_by_unlock: ?*anyopaque,
+//     item_tags: ?*anyopaque,
+//     ui_sort_index: u32,
+//     super_archetype_exclusive_type: ArchetypeData,
+//     allow_item_type_duplicates: bool,
+//     // GstControllableItemData
+//     race_vehicle: ?*anyopaque,
+//     interaction_point_data: ?*anyopaque,
+//     category_items_count: ?*anyopaque,
+//     is_loaner_car: bool,
+//     // padding: [0x3]u8,
+//     padding7: [0x44]u8,
+//     default_license_plate_text: [*:0]const u8,
+
+//     const metadata_id: u32 = 0x04C804C8;
+//     pub fn isValid(self: *const RaceVehicleItemData) bool {
+//         if (self.ref_count == 0 or self.ref_count > max_ref_count) return false;
+//         if (self.int2 & 0xB100 != 0xB100) return false;
+//         if (self.metadata) |data| {
+//             return data.id == metadata_id;
+//         }
+//         return false;
+//     }
+// };
+
+// Utils
+
+fn WithEndPadding(comptime T: type, comptime padding_size: usize) type {
+    const type_info = @typeInfo(T);
+    if (type_info != .@"struct" or type_info.@"struct".is_tuple or type_info.@"struct".layout != .@"extern") {
+        @compileError("Expected a extern struct type found: " ++ @typeName(T));
     }
-};
+    var fields: [type_info.@"struct".fields.len + 1]std.builtin.Type.StructField = undefined;
+    var offset: usize = 0;
+    for (type_info.@"struct".fields) |field| {
+        fields[offset] = field;
+        offset += 1;
+    }
+    fields[offset] = std.builtin.Type.StructField{
+        .name = "padding",
+        .type = [padding_size]u8,
+        .alignment = @alignOf([padding_size]u8),
+        .default_value_ptr = null,
+        .is_comptime = false,
+    };
+    return @Type(std.builtin.Type{
+        .@"struct" = .{
+            .layout = .@"extern",
+            .decls = &.{},
+            .fields = &fields,
+            .is_tuple = false,
+        },
+    });
+}
+
+fn counFields(comptime Ts: []const type) usize {
+    var count: usize = 0;
+    for (Ts) |T| {
+        const type_info = @typeInfo(T);
+        if (type_info == .@"struct" and
+            !type_info.@"struct".is_tuple and
+            type_info.@"struct".layout == .@"extern")
+        {
+            count += type_info.@"struct".fields.len;
+        } else {
+            @compileError("Expected a extern struct type found: " ++ @typeName(T));
+        }
+    }
+    return count;
+}
+
+fn comptimeAddElement(comptime T: type, comptime arr: []const T, comptime element: T) [arr.len + 1]T {
+    var result: [arr.len + 1]T = undefined;
+    for (arr, 0..) |item, i| {
+        result[i] = item;
+    }
+    result[arr.len] = element;
+    return result;
+}
+
+fn WithInheritance(comptime parents: []const type, comptime T: type, comptime m_id: u32) type {
+    var fields: [counFields(&comptimeAddElement(type, parents, T))]std.builtin.Type.StructField = undefined;
+    var offset: usize = 0;
+    for (parents) |parent| {
+        const type_info = @typeInfo(parent);
+        if (type_info == .@"struct" and
+            !type_info.@"struct".is_tuple and
+            type_info.@"struct".layout == .@"extern")
+        {
+            for (type_info.@"struct".fields) |field| {
+                fields[offset] = field;
+                offset += 1;
+            }
+        } else {
+            @compileError("Expected a extern struct type found: " ++ @typeName(parent));
+        }
+    }
+    const type_info = @typeInfo(T);
+    if (type_info == .@"struct" and
+        !type_info.@"struct".is_tuple and
+        type_info.@"struct".layout == .@"extern")
+    {
+        for (type_info.@"struct".fields) |field| {
+            fields[offset] = field;
+            offset += 1;
+        }
+    } else {
+        @compileError("Expected a extern struct type found: " ++ @typeName(T));
+    }
+    const NativeType = @Type(std.builtin.Type{
+        .@"struct" = .{
+            .layout = .@"extern",
+            .decls = &.{},
+            .fields = &fields,
+            .is_tuple = false,
+        },
+    });
+    const inherited_resource_object = @hasField(NativeType, "vtable") and
+        @hasField(NativeType, "metadata") and
+        @hasField(NativeType, "ref_count") and
+        @hasField(NativeType, "int2");
+    if (!inherited_resource_object) {
+        return struct {
+            pub const metadata_id: u32 = m_id;
+            pub const c = NativeType;
+            pub fn isValid(self: *const c) bool {
+                _ = self;
+                return true;
+            }
+            pub inline fn from(ptr: usize) ?*c {
+                const c_ptr: ?*c = @ptrFromInt(ptr);
+                return c_ptr;
+            }
+        };
+    } else {
+        return struct {
+            pub const metadata_id: u32 = m_id;
+            pub const c = NativeType;
+            pub fn isValid(self: *const c) bool {
+                if (!ResourceObject.isValidObject(@ptrCast(self))) return false;
+                if (self.metadata) |metadata| {
+                    return metadata.id == metadata_id;
+                }
+                return false;
+            }
+            pub inline fn from(ptr: usize) ?*c {
+                const c_opt_ptr: ?*c = @ptrFromInt(ptr);
+                const c_ptr = c_opt_ptr orelse return null;
+                if (!isValid(c_ptr)) return null;
+                return c_ptr;
+            }
+        };
+    }
+}
 
 test "offsets" {
     try std.testing.expectEqual(0x18, @offsetOf(EventProgressionAsset, "asset_name"));
@@ -611,9 +950,19 @@ test "offsets" {
     try std.testing.expectEqual(0x16C, @offsetOf(EngineStructureItemData, "engine_upgrade_index"));
     try std.testing.expectEqual(0x170, @offsetOf(EngineStructureItemData, "min_level_of_subitems"));
 
-    try std.testing.expectEqual(0x48, @offsetOf(RaceVehicleItemData, "sorted_scope"));
-    try std.testing.expectEqual(0x5F, @offsetOf(RaceVehicleItemData, "purchaseable"));
-    try std.testing.expectEqual(0xA0, @offsetOf(RaceVehicleItemData, "brand_data"));
-    try std.testing.expectEqual(0xB8, @offsetOf(RaceVehicleItemData, "unlock_asset_mp"));
-    try std.testing.expectEqual(0xF8, @offsetOf(RaceVehicleItemData, "race_vehicle"));
+    // try std.testing.expectEqual(0x48, @offsetOf(RaceVehicleItemData, "sorted_scope"));
+    // try std.testing.expectEqual(0x5F, @offsetOf(RaceVehicleItemData, "purchasable"));
+    // try std.testing.expectEqual(0x78, @offsetOf(RaceVehicleItemData, "dynamic_marketplace_attribute_hashes"));
+    // try std.testing.expectEqual(0xA0, @offsetOf(RaceVehicleItemData, "brand_data"));
+    // try std.testing.expectEqual(0xB8, @offsetOf(RaceVehicleItemData, "unlock_asset_mp"));
+    // try std.testing.expectEqual(0xF8, @offsetOf(RaceVehicleItemData, "race_vehicle"));
+    // try std.testing.expectEqual(0x158, @offsetOf(RaceVehicleItemData, "default_license_plate_text"));
+
+    try std.testing.expectEqual(0x48, @offsetOf(RaceVehicleItemData.c, "sorted_scope"));
+    try std.testing.expectEqual(0x5F, @offsetOf(RaceVehicleItemData.c, "purchasable"));
+    try std.testing.expectEqual(0x78, @offsetOf(RaceVehicleItemData.c, "dynamic_marketplace_attribute_hashes"));
+    try std.testing.expectEqual(0xA0, @offsetOf(RaceVehicleItemData.c, "brand_data"));
+    try std.testing.expectEqual(0xB8, @offsetOf(RaceVehicleItemData.c, "unlock_asset_mp"));
+    try std.testing.expectEqual(0xF8, @offsetOf(RaceVehicleItemData.c, "race_vehicle"));
+    try std.testing.expectEqual(0x158, @offsetOf(RaceVehicleItemData.c, "default_license_plate_text"));
 }
