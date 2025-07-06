@@ -16,7 +16,7 @@ pub const ResourceObject = extern struct {
     ref_count: u32,
     int2: u32,
 
-    pub inline fn isValidObject(self: *const ResourceObject) bool {
+    pub inline fn isValid(self: *const ResourceObject) bool {
         return self.ref_count > 0 and
             self.ref_count <= max_ref_count and
             self.int2 & 0xB100 == 0xB100;
@@ -26,6 +26,8 @@ pub const ResourceObject = extern struct {
 pub const DataContainerAssetPolicy = WithInheritance(&.{ResourceObject}, extern struct {
     asset_name: [*:0]const u8,
 }, 0x00);
+
+pub const Guid = [16]u8;
 
 pub const Vec3 = extern struct {
     x: f32,
@@ -523,6 +525,17 @@ pub const ItemLocation = enum(c_uint) {
     none = 2,
 };
 
+pub const NFSAttachedCustomizationType = enum(c_int) {
+    gesture = 1147168681,
+    charm = 1555285787,
+    emote = 1557700216,
+    signatureStyleVFX = -1466887083,
+    idle = -1124296246,
+    @"test" = -1123537064,
+    pose = -1123408569,
+    invalid = -1,
+};
+
 pub const ItemDataId = extern struct {
     id: u32,
 };
@@ -803,6 +816,68 @@ pub const RimsItemData = WithInheritance(&.{SpatialCustomizationItemData.c}, ext
     allow_width_override: bool,
 }, 0x050D050D);
 
+pub const NFSControllableItemData = WithInheritance(&.{NFSItemData.c}, extern struct {
+    controllable_type: ?*anyopaque,
+    customisation_items: ?*anyopaque,
+}, 0x00);
+
+pub const NFSCharacterItemData = WithInheritance(&.{NFSControllableItemData.c}, extern struct {
+    voice_id: i32,
+    pronoun: i32,
+    voice_pitch: f32,
+    can_customize: bool,
+}, 0x05530553);
+
+pub const BannerArtItemData = WithInheritance(&.{RaceItemData.c}, extern struct {
+    border_texture: ?*anyopaque,
+    background_color: Vec3,
+    fullscreen_texture: ?*anyopaque,
+    player_tag_texture: ?*anyopaque,
+}, 0x05470547);
+
+pub const BannerAudioItemData = WithInheritance(&.{RaceItemData.c}, extern struct {
+    sound_patch_config_guid: Guid,
+}, 0x05440544);
+
+pub const BannerPoseItemData = WithInheritance(&.{RaceItemData.c}, extern struct {
+    pose_index: i32,
+}, 0x054C054C);
+
+pub const StaticBannerCustomizationItemData = WithInheritance(&.{RaceItemData.c}, extern struct {
+    sticker_texture: ?*anyopaque,
+    snapshot_texture: ?*anyopaque,
+}, 0x04C404C4);
+
+pub const BannerTitleItemData = WithInheritance(&.{RaceItemData.c}, extern struct {
+    localized_title: [*:0]const u8,
+    background_texture: ?*anyopaque,
+}, 0x04C504C5);
+
+pub const BannerTraitItemData = WithInheritance(&.{RaceItemData.c}, extern struct {
+    slot: i32,
+}, 0x04C604C6);
+
+pub const NFSCustomizationItemData = WithInheritance(&.{NFSItemData.c}, extern struct {
+    tags: NFSItemTags,
+    slots: ?*anyopaque,
+}, 0x00);
+
+pub const NFSAttachedCustomizationItemData = WithInheritance(&.{NFSCustomizationItemData.c}, extern struct {
+    customization_properties: ?*anyopaque,
+    customization_type: NFSAttachedCustomizationType,
+    audio_signature_style_pack_value: i32,
+    bundle_id: u32,
+}, 0x05560556);
+
+pub const LiveryDecalSwatchPackItemData = WithInheritance(&.{RaceItemData.c}, extern struct {
+    decal_swatch_pack: ?*anyopaque,
+    badge_type: i32,
+    first_swatch_index: u32,
+    num_swatches: i32,
+    show_unused_swatches: bool,
+    show_when_locked: bool,
+}, 0x053B053B);
+
 // pub const RaceVehicleItemData = extern struct {
 //     vtable: ?*anyopaque,
 //     metadata: ?*AssetMetadata,
@@ -983,7 +1058,7 @@ fn WithInheritance(comptime parents: []const type, comptime T: type, comptime m_
             pub const metadata_id: u32 = m_id;
             pub const c = NativeType;
             pub fn isValid(self: *const c) bool {
-                if (!ResourceObject.isValidObject(@ptrCast(self))) return false;
+                if (!ResourceObject.isValid(@ptrCast(self))) return false;
                 if (self.metadata) |metadata| {
                     return metadata.id == metadata_id;
                 }

@@ -433,7 +433,7 @@ const unlock_vehicles = struct {
                     std.debug.print(": Ptr 0? {}\n", .{i});
                     _ = vehicles_set.swapRemoveAt(i);
                     continue :removal;
-                } else if (!sdk.ResourceObject.isValidObject(@ptrCast(vehicle))) {
+                } else if (!sdk.ResourceObject.isValid(@ptrCast(vehicle))) {
                     _ = vehicles_set.swapRemoveAt(i);
                     continue :removal;
                 }
@@ -485,43 +485,37 @@ const unlock_vehicles = struct {
     }
 
     fn processResourceConstruct(regs: *GeneralRegisters) !void {
-        if (sdk.VehicleProgressionAsset.from(regs.rsi)) |asset| {
-            try unlockDefaultVehicles(asset);
-            return;
-        }
-        if (sdk.VehicleProgressionAsset.from(regs.r15)) |asset| {
-            try unlockDefaultVehicles(asset);
-            return;
-        }
+        // if (sdk.VehicleProgressionAsset.from(regs.rsi)) |asset| {
+        //     return unlockDefaultVehicles(asset);
+        // }
+        // if (sdk.VehicleProgressionAsset.from(regs.r15)) |asset| {
+        //     return unlockDefaultVehicles(asset);
+        // }
 
         if (sdk.PreCustomizedDealershipVehicleItemData.from(regs.rsi)) |item| {
             if (!checkVehicleAssetName(item)) {
                 return;
             }
-            try add(item);
-            return;
+            return add(item);
         }
         if (sdk.PreCustomizedDealershipVehicleItemData.from(regs.r15)) |item| {
             if (!checkVehicleAssetName(item)) {
                 return;
             }
-            try add(item);
-            return;
+            return add(item);
         }
 
         if (sdk.RaceVehicleItemData.from(regs.rsi)) |item| {
             if (!checkVehicleAssetName(item)) {
                 return;
             }
-            try add(item);
-            return;
+            return add(item);
         }
         if (sdk.RaceVehicleItemData.from(regs.r15)) |item| {
             if (!checkVehicleAssetName(item)) {
                 return;
             }
-            try add(item);
-            return;
+            return add(item);
         }
 
         return error.NotValidObject;
@@ -529,75 +523,154 @@ const unlock_vehicles = struct {
 
     fn processMetadataCheck(regs: *GeneralRegisters) !void {
         if (sdk.PreCustomizedDealershipVehicleItemData.from(regs.rdi)) |item| {
-            try add(item);
-            return;
+            return add(item);
         }
 
         if (sdk.RaceVehicleItemData.from(regs.rdi)) |item| {
-            try add(item);
-            return;
+            return add(item);
         }
 
         if (sdk.VehicleProgressionAsset.from(regs.rdi)) |asset| {
-            try unlockDefaultVehicles(asset);
-            return;
+            return unlockDefaultVehicles(asset);
         }
 
         return error.NotValidObject;
     }
 };
 
-const unlock_visualitems = struct {
-    const visualitem_types = [_]type{
-        sdk.TrunkLidItemData,
-        sdk.BumperItemData,
-        sdk.DiffuserItemData,
-        sdk.ExhaustItemData,
-        sdk.FendersItemData,
-        sdk.GrilleItemData,
-        sdk.LightsItemData,
-        sdk.HoodItemData,
-        sdk.WingMirrorsItemData,
-        sdk.RoofItemData,
-        sdk.SideSkirtsItemData,
-        sdk.SplitterItemData,
-        sdk.SpoilerItemData,
-        sdk.RimsItemData,
-    };
+fn test_unlock(comptime T: type) type {
+    return struct {
+        fn processResourceConstruct(regs: *GeneralRegisters) !void {
+            if (T.from(regs.rsi)) |item| {
+                const asset_name = std.mem.span(item.asset_name);
+                std.debug.print("UnlockAllItems: Unlocking item with asset name: {s}\n", .{asset_name});
+                item.unlock_asset_mp_cop = null;
+                item.unlock_asset_sp = null;
+                item.unlock_asset_mp = null;
+                item.purchasable = true;
+                return;
+            }
+            if (T.from(regs.r15)) |item| {
+                const asset_name = std.mem.span(item.asset_name);
+                std.debug.print("UnlockAllItems: Unlocking item with asset name: {s}\n", .{asset_name});
+                item.unlock_asset_mp_cop = null;
+                item.unlock_asset_sp = null;
+                item.unlock_asset_mp = null;
+                item.purchasable = true;
+                return;
+            }
 
+            return error.NotValidObject;
+        }
+
+        fn processMetadataCheck(regs: *GeneralRegisters) !void {
+            if (T.from(regs.rdi)) |item| {
+                const asset_name = std.mem.span(item.asset_name);
+                std.debug.print("UnlockAllItems: Unlocking item with asset name: {s}\n", .{asset_name});
+                item.unlock_asset_mp_cop = null;
+                item.unlock_asset_sp = null;
+                item.unlock_asset_mp = null;
+                item.purchasable = true;
+                return;
+            }
+
+            return error.NotValidObject;
+        }
+    };
+}
+
+fn normal_unlock(comptime types: []const type) type {
+    return struct {
+        fn processResourceConstruct(regs: *GeneralRegisters) !void {
+            inline for (types) |ItemType| {
+                if (ItemType.from(regs.rsi)) |item| {
+                    unlock(item);
+                    return;
+                }
+                if (ItemType.from(regs.r15)) |item| {
+                    unlock(item);
+                    return;
+                }
+            }
+
+            return error.NotValidObject;
+        }
+
+        fn processMetadataCheck(regs: *GeneralRegisters) !void {
+            inline for (types) |ItemType| {
+                if (ItemType.from(regs.rdi)) |item| {
+                    unlock(item);
+                    return;
+                }
+            }
+
+            return error.NotValidObject;
+        }
+
+        inline fn unlock(item: anytype) void {
+            item.unlock_asset_mp_cop = null;
+            item.unlock_asset_sp = null;
+            item.unlock_asset_mp = null;
+            item.purchasable = true;
+        }
+    };
+}
+
+const unlock_other_raceitems = normal_unlock(&.{
+    // vehicle visualitems
+    sdk.TrunkLidItemData,
+    sdk.BumperItemData,
+    sdk.DiffuserItemData,
+    sdk.ExhaustItemData,
+    sdk.FendersItemData,
+    sdk.GrilleItemData,
+    sdk.LightsItemData,
+    sdk.HoodItemData,
+    sdk.WingMirrorsItemData,
+    sdk.RoofItemData,
+    sdk.SideSkirtsItemData,
+    sdk.SplitterItemData,
+    sdk.SpoilerItemData,
+    sdk.RimsItemData,
+    // avatar
+    sdk.NFSCharacterItemData,
+    sdk.BannerArtItemData,
+    sdk.BannerAudioItemData,
+    sdk.BannerPoseItemData,
+    sdk.StaticBannerCustomizationItemData,
+    sdk.BannerTitleItemData,
+    sdk.BannerTraitItemData,
+    sdk.NFSAttachedCustomizationItemData,
+});
+
+const unlock_livery_decals = struct {
     fn processResourceConstruct(regs: *GeneralRegisters) !void {
-        inline for (visualitem_types) |VisualItemType| {
-            if (VisualItemType.from(regs.rsi)) |item| {
-                item.unlock_asset_mp_cop = null;
-                item.unlock_asset_sp = null;
-                item.unlock_asset_mp = null;
-                item.purchasable = true;
-                return;
-            }
-            if (VisualItemType.from(regs.r15)) |item| {
-                item.unlock_asset_mp_cop = null;
-                item.unlock_asset_sp = null;
-                item.unlock_asset_mp = null;
-                item.purchasable = true;
-                return;
-            }
+        if (sdk.LiveryDecalSwatchPackItemData.from(regs.rsi)) |item| {
+            unlock(item);
+            return;
+        }
+        if (sdk.LiveryDecalSwatchPackItemData.from(regs.r15)) |item| {
+            unlock(item);
+            return;
         }
 
         return error.NotValidObject;
     }
 
     fn processMetadataCheck(regs: *GeneralRegisters) !void {
-        inline for (visualitem_types) |VisualItemType| {
-            if (VisualItemType.from(regs.rdi)) |item| {
-                item.unlock_asset_mp_cop = null;
-                item.unlock_asset_sp = null;
-                item.unlock_asset_mp = null;
-                item.purchasable = true;
-                return;
-            }
+        if (sdk.LiveryDecalSwatchPackItemData.from(regs.rdi)) |item| {
+            unlock(item);
+            return;
         }
 
         return error.NotValidObject;
+    }
+
+    inline fn unlock(item: anytype) void {
+        item.purchasable = true;
+        item.decal_swatch_pack = null;
+        item.first_swatch_index = 0;
+        item.num_swatches = 0;
     }
 };
 
@@ -613,11 +686,15 @@ fn onLoadingScene(regs: *GeneralRegisters) callconv(.c) void {
 }
 
 fn onResourceConstruct(regs: *GeneralRegisters) callconv(.c) void {
+    if (unlock_livery_decals.processResourceConstruct(regs)) {
+        return;
+    } else |_| {}
+
     if (unlock_vehicles.processResourceConstruct(regs)) {
         return;
     } else |_| {}
 
-    if (unlock_visualitems.processResourceConstruct(regs)) {
+    if (unlock_other_raceitems.processResourceConstruct(regs)) {
         return;
     } else |_| {}
 
@@ -638,11 +715,15 @@ fn onResourceConstruct(regs: *GeneralRegisters) callconv(.c) void {
 }
 
 fn onResourceMetadataCheck(regs: *GeneralRegisters) callconv(.c) void {
+    if (unlock_livery_decals.processMetadataCheck(regs)) {
+        return;
+    } else |_| {}
+
     if (unlock_vehicles.processMetadataCheck(regs)) {
         return;
     } else |_| {}
 
-    if (unlock_visualitems.processMetadataCheck(regs)) {
+    if (unlock_other_raceitems.processMetadataCheck(regs)) {
         return;
     } else |_| {}
 

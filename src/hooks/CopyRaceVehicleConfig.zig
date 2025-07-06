@@ -767,16 +767,15 @@ fn CopyState(comptime OT: type) type {
     };
 }
 
-const PerformanceModification = struct { usize, Configable(RaceVehiclePerformanceModificationItemData) };
-var performance_modifications = [_]PerformanceModification{
-    .{ 0, fullCopyConfigable(RaceVehiclePerformanceModificationItemData, .{
-        .value = ConfigableAction(f32){ .replace = 198.5 },
-    }) },
-};
-
 //
 // Example of how List(T) can be used with ConfigableAction
 //
+// const PerformanceModification = struct { usize, Configable(RaceVehiclePerformanceModificationItemData) };
+// var performance_modifications = [_]PerformanceModification{
+//     .{ 0, fullCopyConfigable(RaceVehiclePerformanceModificationItemData, .{
+//         .value = ConfigableAction(f32){ .replace = 198.5 },
+//     }) },
+// };
 // const Items1Upgrade = struct { usize, Configable(RaceVehiclePerformanceUpgradeData) };
 // var items1_upgrades = [_]Items1Upgrade{
 //     .{ 0, fullCopyConfigable(RaceVehiclePerformanceUpgradeData, .{

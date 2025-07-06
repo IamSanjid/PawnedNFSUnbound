@@ -10,7 +10,11 @@ Since I was testing with Need for Speed Unbound the framework is kind of tangled
   2. Copy Audi R8 Race Vehicle Config to Razor's BMW M3 GTR Race Vehicle Config
      * So, basically Razor's Custom BMW M3 GTR will pretty much behave(handle, accelerate, performance upgrades etc..) like Audi R8. Except the stock engine will still sound same.
      * Yes, it is possible to do this kind of "copy" from one car to any other car. If you play around for enough time you will find a way to do with current Source Code. If not open a discussion or something.
-  3. Unlocked almost all the cars including Bonus/Custom cars and also bikes.
+  3. Unlock most of the items.
+     * Unlocked all cars including Bonus/Custom, (Traffic, Cop probably need offline mode) cars and also bikes.
+     * Unlocked all bodykits.
+     * Unlocked all character models online.
+     * Unlocked all banner customizations.
 
 ## Build/Install Dlls?
 Last tested with `zig-x86_64-windows-0.15.0-dev.848+f3940ad85`.
