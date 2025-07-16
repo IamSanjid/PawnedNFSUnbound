@@ -579,16 +579,30 @@ fn test_unlock(comptime T: type) type {
     };
 }
 
-fn normal_unlock(comptime types: []const type) type {
+fn defaultUnlock(item: anytype) void {
+    item.unlock_asset_mp_cop = null;
+    item.unlock_asset_sp = null;
+    item.unlock_asset_mp = null;
+    item.purchasable = true;
+}
+
+const Unlock = struct { type, @TypeOf(defaultUnlock) };
+fn DefaultUnlock(T: type) Unlock {
+    return .{ T, defaultUnlock };
+}
+
+fn normal_unlock(comptime unlocks: []const Unlock) type {
     return struct {
         fn processResourceConstruct(regs: *GeneralRegisters) !void {
-            inline for (types) |ItemType| {
+            inline for (unlocks) |unlock| {
+                const ItemType = unlock.@"0";
+                const unlock_fn = unlock.@"1";
                 if (ItemType.from(regs.rsi)) |item| {
-                    unlock(item);
+                    @call(.always_inline, unlock_fn, .{item});
                     return;
                 }
                 if (ItemType.from(regs.r15)) |item| {
-                    unlock(item);
+                    @call(.always_inline, unlock_fn, .{item});
                     return;
                 }
             }
@@ -597,82 +611,57 @@ fn normal_unlock(comptime types: []const type) type {
         }
 
         fn processMetadataCheck(regs: *GeneralRegisters) !void {
-            inline for (types) |ItemType| {
+            inline for (unlocks) |unlock| {
+                const ItemType = unlock.@"0";
+                const unlock_fn = unlock.@"1";
                 if (ItemType.from(regs.rdi)) |item| {
-                    unlock(item);
+                    @call(.always_inline, unlock_fn, .{item});
                     return;
                 }
             }
 
             return error.NotValidObject;
         }
-
-        inline fn unlock(item: anytype) void {
-            item.unlock_asset_mp_cop = null;
-            item.unlock_asset_sp = null;
-            item.unlock_asset_mp = null;
-            item.purchasable = true;
-        }
     };
 }
 
 const unlock_other_raceitems = normal_unlock(&.{
+    .{
+        sdk.LiveryDecalSwatchPackItemData,
+        struct {
+            fn unlock(item: anytype) void {
+                item.purchasable = true;
+                item.decal_swatch_pack = null;
+                item.first_swatch_index = 0;
+                item.num_swatches = 0;
+            }
+        }.unlock,
+    },
     // vehicle visualitems
-    sdk.TrunkLidItemData,
-    sdk.BumperItemData,
-    sdk.DiffuserItemData,
-    sdk.ExhaustItemData,
-    sdk.FendersItemData,
-    sdk.GrilleItemData,
-    sdk.LightsItemData,
-    sdk.HoodItemData,
-    sdk.WingMirrorsItemData,
-    sdk.RoofItemData,
-    sdk.SideSkirtsItemData,
-    sdk.SplitterItemData,
-    sdk.SpoilerItemData,
-    sdk.RimsItemData,
+    DefaultUnlock(sdk.TrunkLidItemData),
+    DefaultUnlock(sdk.BumperItemData),
+    DefaultUnlock(sdk.DiffuserItemData),
+    DefaultUnlock(sdk.ExhaustItemData),
+    DefaultUnlock(sdk.FendersItemData),
+    DefaultUnlock(sdk.GrilleItemData),
+    DefaultUnlock(sdk.LightsItemData),
+    DefaultUnlock(sdk.HoodItemData),
+    DefaultUnlock(sdk.WingMirrorsItemData),
+    DefaultUnlock(sdk.RoofItemData),
+    DefaultUnlock(sdk.SideSkirtsItemData),
+    DefaultUnlock(sdk.SplitterItemData),
+    DefaultUnlock(sdk.SpoilerItemData),
+    DefaultUnlock(sdk.RimsItemData),
     // avatar
-    sdk.NFSCharacterItemData,
-    sdk.BannerArtItemData,
-    sdk.BannerAudioItemData,
-    sdk.BannerPoseItemData,
-    sdk.StaticBannerCustomizationItemData,
-    sdk.BannerTitleItemData,
-    sdk.BannerTraitItemData,
-    sdk.NFSAttachedCustomizationItemData,
+    DefaultUnlock(sdk.NFSCharacterItemData),
+    DefaultUnlock(sdk.BannerArtItemData),
+    DefaultUnlock(sdk.BannerAudioItemData),
+    DefaultUnlock(sdk.BannerPoseItemData),
+    DefaultUnlock(sdk.StaticBannerCustomizationItemData),
+    DefaultUnlock(sdk.BannerTitleItemData),
+    DefaultUnlock(sdk.BannerTraitItemData),
+    DefaultUnlock(sdk.NFSAttachedCustomizationItemData),
 });
-
-const unlock_livery_decals = struct {
-    fn processResourceConstruct(regs: *GeneralRegisters) !void {
-        if (sdk.LiveryDecalSwatchPackItemData.from(regs.rsi)) |item| {
-            unlock(item);
-            return;
-        }
-        if (sdk.LiveryDecalSwatchPackItemData.from(regs.r15)) |item| {
-            unlock(item);
-            return;
-        }
-
-        return error.NotValidObject;
-    }
-
-    fn processMetadataCheck(regs: *GeneralRegisters) !void {
-        if (sdk.LiveryDecalSwatchPackItemData.from(regs.rdi)) |item| {
-            unlock(item);
-            return;
-        }
-
-        return error.NotValidObject;
-    }
-
-    inline fn unlock(item: anytype) void {
-        item.purchasable = true;
-        item.decal_swatch_pack = null;
-        item.first_swatch_index = 0;
-        item.num_swatches = 0;
-    }
-};
 
 fn onLoadingScene(regs: *GeneralRegisters) callconv(.c) void {
     _ = regs;
@@ -686,10 +675,6 @@ fn onLoadingScene(regs: *GeneralRegisters) callconv(.c) void {
 }
 
 fn onResourceConstruct(regs: *GeneralRegisters) callconv(.c) void {
-    if (unlock_livery_decals.processResourceConstruct(regs)) {
-        return;
-    } else |_| {}
-
     if (unlock_vehicles.processResourceConstruct(regs)) {
         return;
     } else |_| {}
@@ -715,10 +700,6 @@ fn onResourceConstruct(regs: *GeneralRegisters) callconv(.c) void {
 }
 
 fn onResourceMetadataCheck(regs: *GeneralRegisters) callconv(.c) void {
-    if (unlock_livery_decals.processMetadataCheck(regs)) {
-        return;
-    } else |_| {}
-
     if (unlock_vehicles.processMetadataCheck(regs)) {
         return;
     } else |_| {}

@@ -20,30 +20,20 @@ var in_lock = std.Thread.RwLock{};
 const default_file_reader: std.Io.Reader = std.fs.File.Reader.initInterface(&.{});
 
 fn stdinStream(io_reader: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+    if (!initialized.load(.acquire)) return error.EndOfStream;
     in_lock.lock();
     defer in_lock.unlock();
     return default_file_reader.vtable.stream(io_reader, w, limit);
 }
 
 fn stdinDiscard(io_reader: *std.Io.Reader, limit: std.Io.Limit) std.Io.Reader.Error!usize {
+    if (!initialized.load(.acquire)) return error.EndOfStream;
     in_lock.lock();
     defer in_lock.unlock();
     return default_file_reader.vtable.discard(io_reader, limit);
 }
 
-var stdin: std.fs.File.Reader = .{
-    .interface = .{
-        .vtable = &.{
-            .stream = stdinStream,
-            .discard = stdinDiscard,
-        },
-        .buffer = &.{},
-        .seek = 0,
-        .end = 0,
-    },
-    .file = undefined,
-    .mode = .streaming,
-};
+var stdin: std.fs.File = undefined;
 var stdout: std.fs.File.Writer = .{
     .interface = std.fs.File.Writer.initInterface(&.{}),
     .file = undefined,
@@ -56,7 +46,7 @@ var stderr: std.fs.File.Writer = .{
 };
 
 pub fn init() !void {
-    if (initialized.load(.seq_cst)) return;
+    if (initialized.load(.acquire)) return;
     if (windows_extra.AllocConsole() == windows.FALSE) {
         return Errors.FailedToAllocateConsole;
     }
@@ -101,21 +91,21 @@ pub fn init() !void {
     last_stderr_handle = windows.kernel32.GetStdHandle(windows.STD_ERROR_HANDLE);
     _ = windows_extra.SetStdHandle(windows.STD_ERROR_HANDLE, stdout_handle);
 
-    stdin.file = .{ .handle = stdin_handle };
+    stdin = .{ .handle = stdin_handle };
     stdout.file = .{ .handle = stdout_handle };
     stderr.file = .{ .handle = stdout_handle };
 
-    initialized.store(true, .seq_cst);
+    initialized.store(true, .release);
 }
 
 pub fn deinit() void {
-    if (!initialized.load(.seq_cst)) return;
+    if (!initialized.load(.acquire)) return;
     out_lock.lock();
     defer out_lock.unlock();
     in_lock.lock();
     defer in_lock.unlock();
 
-    stdin.file.close();
+    stdin.close();
     stdout.file.close();
     // stderr is the same as stdout in this case
 
@@ -132,22 +122,29 @@ pub fn deinit() void {
         last_stderr_handle = null;
     }
 
-    initialized.store(false, .seq_cst);
+    initialized.store(false, .release);
     _ = windows_extra.FreeConsole();
 }
 
-pub fn stdinReader(buffer: []u8) ?*std.Io.Reader {
-    if (!initialized.load(.seq_cst)) return null;
-    {
-        in_lock.lock();
-        defer in_lock.unlock();
-        stdin.interface.buffer = buffer;
-    }
-    return &stdin.interface;
+pub fn stdinReader(buffer: []u8) ?std.fs.File.Reader {
+    if (!initialized.load(.acquire)) return null;
+    return .{
+        .interface = .{
+            .vtable = &.{
+                .stream = stdinStream,
+                .discard = stdinDiscard,
+            },
+            .buffer = buffer,
+            .seek = 0,
+            .end = 0,
+        },
+        .file = stdin,
+        .mode = .streaming,
+    };
 }
 
 pub fn println(comptime format: []const u8, args: anytype) void {
-    if (!initialized.load(.seq_cst)) {
+    if (!initialized.load(.acquire)) {
         std.debug.print(format ++ "\n", args);
         return;
     }
@@ -161,7 +158,7 @@ pub fn println(comptime format: []const u8, args: anytype) void {
 }
 
 pub fn eprintln(comptime format: []const u8, args: anytype) void {
-    if (!initialized.load(.seq_cst)) {
+    if (!initialized.load(.acquire)) {
         std.debug.print(format ++ "\n", args);
         return;
     }
