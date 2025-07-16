@@ -160,7 +160,7 @@ fn modifyHooksInit(allocator: std.mem.Allocator, source_code_z: [:0]const u8, ho
                 .{hooks_src_path},
             );
             defer allocator.free(insertion_code);
-            return try std.fmt.allocPrintZ(allocator, "{s}\n{s}\n{s}", .{ before_insertion, insertion_code, after_insertion });
+            return try std.fmt.allocPrintSentinel(allocator, "{s}\n{s}\n{s}", .{ before_insertion, insertion_code, after_insertion }, 0);
         }
     }
 
@@ -214,7 +214,7 @@ fn modifyHooksDeinit(allocator: std.mem.Allocator, source_code_z: [:0]const u8, 
                 .{hooks_src_path},
             );
             defer allocator.free(insertion_code);
-            return try std.fmt.allocPrintZ(allocator, "{s}{s}\n{s}", .{ before_insertion, insertion_code, after_insertion });
+            return try std.fmt.allocPrintSentinel(allocator, "{s}{s}\n{s}", .{ before_insertion, insertion_code, after_insertion }, 0);
         }
     }
 

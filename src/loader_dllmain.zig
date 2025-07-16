@@ -79,13 +79,12 @@ fn unloadDll(index: usize) bool {
 }
 
 fn mainThread(module: windows.HMODULE) !void {
-    const reader = WinConsole.stdinReader() orelse return;
+    var buffer: [512]u8 = undefined;
+    const reader = WinConsole.stdinReader(&buffer) orelse return;
     WinConsole.println("DllModule: {}\n", .{module});
 
-    var buffer: [512]u8 = undefined;
-
     while (true) {
-        const str = try reader.readUntilDelimiter(&buffer, '\n');
+        const str = try reader.takeDelimiterExclusive('\n');
 
         const full_cmd = std.mem.trim(u8, str, &std.ascii.whitespace);
         var splitted = std.mem.splitScalar(u8, full_cmd, ' ');

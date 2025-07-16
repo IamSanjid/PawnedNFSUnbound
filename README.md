@@ -17,7 +17,7 @@ Since I was testing with Need for Speed Unbound the framework is kind of tangled
      * Unlocked all banner customizations.
 
 ## Build/Install Dlls?
-Last tested with `zig-x86_64-windows-0.15.0-dev.848+f3940ad85`.
+Last tested with `zig-x86_64-windows-0.15.0-dev.1034+bd97b6618`.
   * `git clone https://github.com/IamSanjid/PawnedNFSUnbound.git`
   * `cd PawnedNFSUnbound && zig build all`
 These command should build two DLL's one loader and another main, the loader needs to get injected I just use `CheatEngine`'s inject dll thingie.

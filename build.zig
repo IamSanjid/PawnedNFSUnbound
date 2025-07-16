@@ -54,19 +54,26 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = b.path("src/binary_analysis/binary_analysis.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "disasm", .module = disasm },
+            .{ .name = "windows_extra", .module = windows_extra },
+            .{ .name = "asm_patch_buffer", .module = asm_patch_buffer },
+        },
     });
-    binary_analysis.addImport("disasm", disasm);
-    binary_analysis.addImport("windows_extra", windows_extra);
-    binary_analysis.addImport("asm_patch_buffer", asm_patch_buffer);
 
-    const pawned = b.addSharedLibrary(.{
+    const pawned = b.addLibrary(.{
         .name = "PawnedNFSUnbound",
-        .root_source_file = b.path("src/dllmain.zig"),
-        .target = target,
-        .optimize = optimize,
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/dllmain.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "windows_extra", .module = windows_extra },
+                .{ .name = "binary_analysis", .module = binary_analysis },
+            },
+        }),
     });
-    pawned.root_module.addImport("windows_extra", windows_extra);
-    pawned.root_module.addImport("binary_analysis", binary_analysis);
     pawned.subsystem = .Console;
     pawned.linkLibC();
     // pawned.addWin32ResourceFile(.{ .file = b.path("res/resource.rc") });
@@ -75,13 +82,18 @@ pub fn build(b: *std.Build) !void {
 
     // loader dll...
     const load_cmd = b.step("loader", "Only builds and installs the loader dll.");
-    const loader = b.addSharedLibrary(.{
+    const loader = b.addLibrary(.{
         .name = "PawnedNFSUnboundLoader",
-        .root_source_file = b.path("src/loader_dllmain.zig"),
-        .target = target,
-        .optimize = optimize,
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/loader_dllmain.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "windows_extra", .module = windows_extra },
+            },
+        }),
     });
-    loader.root_module.addImport("windows_extra", windows_extra);
     loader.subsystem = .Console;
     loader.linkLibC();
     // loader.addWin32ResourceFile(.{ .file = b.path("res/resource.rc") });
@@ -96,17 +108,15 @@ pub fn build(b: *std.Build) !void {
     const test_cmd = b.step("test", "Runs the available unit tests.");
     test_cmd.dependOn(&b.addRunArtifact(b.addTest(.{
         .root_module = binary_analysis,
-        .target = target,
-        .optimize = optimize,
     })).step);
     test_cmd.dependOn(&b.addRunArtifact(b.addTest(.{
         .root_module = disasm,
-        .target = target,
-        .optimize = optimize,
     })).step);
     test_cmd.dependOn(&b.addRunArtifact(b.addTest(.{
-        .root_source_file = b.path("src/hooks/tests.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/hooks/tests.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     })).step);
 }

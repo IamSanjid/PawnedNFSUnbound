@@ -1,19 +1,18 @@
 .{
     .name = .PawnedNFSUnbound,
     .version = "0.0.0",
-    .fingerprint = 0x2201b7d938f2fff5,
-    .minimum_zig_version = "0.15.0-dev.621+a63f7875f",
+    .fingerprint = 0x2201b7d938f2fff5, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.15.0-dev.1034+bd97b6618",
     .dependencies = .{
         .capstone_bindings_zig = .{
-            .url = "git+https://github.com/IamSanjid/capstone-bindings-zig.git?ref=zig-master#75dae82a19c89e68e33aaa7626636e1a8cb32990",
-            .hash = "capstone_bindings_zig-5.0.1-Z6g-FnF1AQAGyV33_zhxLsZByA_PxyfQWliPW_MAeZcD",
+            .url = "git+https://github.com/IamSanjid/capstone-bindings-zig.git?ref=zig-master#f250bd78afa802acf88461f6d784c0aa5c3694e4",
+            .hash = "capstone_bindings_zig-5.0.1-Z6g-Fu11AQAhBzmKSejOrPn69xz9CPF2qRffNOsVOMqU",
         },
         .asm_patch_buffer = .{
-            .url = "git+https://github.com/IamSanjid/asm_patch_buffer.git#57b4ee83ece7c82b95f035413a981a3b7288a171",
-            .hash = "asm_patch_buffer-0.0.0-0Tz5geMRAQCxqITnyy1KtJA7ZBnOPIiYp-Z1lrzwfyU2",
+            .url = "git+https://github.com/IamSanjid/asm_patch_buffer.git#6da2d743ea51dffbebbee3d1504efd8483b13c7e",
+            .hash = "asm_patch_buffer-0.0.0-0Tz5gYcSAQCbkc_LeKeUqo-1aaBFxDWdBRpU4zn0OrqD",
         },
     },
-
     .paths = .{
         "build.zig",
         "build.zig.zon",
