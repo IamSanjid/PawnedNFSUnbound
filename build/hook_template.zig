@@ -225,8 +225,7 @@ fn hookFn() callconv(.naked) noreturn {
     asm volatile (stack_state_saver.save_call_hook_template
         :
         : [onHook] "X" (&onHook),
-        : "memory", "cc"
-    );
+        : .{ .memory = true, .cc = true });
 
     // our special signature to detect end of function, too lazy to detect with other means :)
     asm volatile (
@@ -283,7 +282,6 @@ fn hookTo(detour: *ba.Detour, hook_target: usize, hook_fn_start: usize) !void {
 
 /// Cleans up resources allocated by the *${HOOK_NAME}* hook
 pub fn deinit() void {
-    _ = arena.reset(.free_all);
     arena.deinit();
 }
 
@@ -294,3 +292,4 @@ pub const base_module = "${HOOK_BASE_MODULE}";
 fn onHook(regs: *GeneralRegisters) callconv(.c) void {
     std.debug.print("On {s} hook! Regs: 0x{X}\n", .{ name, @intFromPtr(regs) });
 }
+

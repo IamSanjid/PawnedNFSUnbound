@@ -153,8 +153,7 @@ pub fn hookFn() callconv(.naked) noreturn {
         \\
         : [_] "={rax}" (rax_value),
         :
-        : "rax"
-    );
+        : .{ .rax = true });
     asm volatile (std.fmt.comptimePrint(
             \\ mov %%rbx, {}(%[general_base])
             \\ mov %%rcx, {}(%[general_base])
@@ -190,8 +189,7 @@ pub fn hookFn() callconv(.naked) noreturn {
         })
         :
         : [general_base] "{rax}" (&registers),
-        : "rax", "memory"
-    );
+        : .{ .rax = true, .memory = true });
     asm volatile (std.fmt.comptimePrint(
             \\ movups %%xmm0, {}(%[float_base])
             \\ movups %%xmm1, {}(%[float_base])
@@ -229,16 +227,14 @@ pub fn hookFn() callconv(.naked) noreturn {
         })
         :
         : [float_base] "r" (&float_registers),
-        : "memory"
-    );
+        : .{ .memory = true });
 
     // custom code
     asm volatile (
         \\ callq %[onHook:P]
         :
         : [onHook] "X" (&onHook),
-        : "rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "memory"
-    );
+        : .{ .rax = true, .rbx = true, .rcx = true, .rdx = true, .rsi = true, .rdi = true, .rbp = true, .rsp = true, .r8 = true, .r9 = true, .r10 = true, .r11 = true, .r12 = true, .r13 = true, .r14 = true, .r15 = true, .memory = true });
 
     // restoring state...
     asm volatile (std.fmt.comptimePrint(
@@ -278,8 +274,7 @@ pub fn hookFn() callconv(.naked) noreturn {
         })
         :
         : [float_base] "r" (&float_registers),
-        : "memory"
-    );
+        : .{ .memory = true });
     asm volatile (std.fmt.comptimePrint(
             \\ mov {}(%[general_base]), %%rbx
             \\ mov {}(%[general_base]), %%rcx
@@ -315,8 +310,7 @@ pub fn hookFn() callconv(.naked) noreturn {
         })
         :
         : [general_base] "{rax}" (&registers),
-        : "memory"
-    );
+        : .{ .memory = true });
 
     // our special signature to detect end of function, too lazy to detect with other means :)
     asm volatile (

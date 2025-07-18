@@ -225,8 +225,7 @@ fn loadingSceneHookFn() callconv(.naked) noreturn {
     asm volatile (stack_state_saver.save_call_hook_template
         :
         : [onHook] "X" (&onLoadingScene),
-        : "memory", "cc"
-    );
+        : .{ .memory = true, .cc = true });
 
     // our special signature to detect end of function, too lazy to detect with other means :)
     asm volatile (
@@ -255,8 +254,7 @@ fn resourceConstructHookFn() callconv(.naked) noreturn {
     asm volatile (stack_state_saver.save_call_hook_template
         :
         : [onHook] "X" (&onResourceConstruct),
-        : "memory", "cc"
-    );
+        : .{ .memory = true, .cc = true });
 
     // our special signature to detect end of function, too lazy to detect with other means :)
     asm volatile (
@@ -285,8 +283,7 @@ fn resourceMetadataCheckHookFn() callconv(.naked) noreturn {
     asm volatile (stack_state_saver.save_call_hook_template
         :
         : [onHook] "X" (&onResourceMetadataCheck),
-        : "memory", "cc"
-    );
+        : .{ .memory = true, .cc = true });
 
     // our special signature to detect end of function, too lazy to detect with other means :)
     asm volatile (

@@ -1,9 +1,3 @@
-const builtin = @import("builtin");
-const std = @import("std");
-const windows = std.os.windows;
-
-const windows_extra = @import("windows_extra");
-
 pub const safe_overwrite_boundary = @import("safe_overwrite_boundary.zig");
 
 pub const x86_64 = @import("x86_64/x86_64.zig");

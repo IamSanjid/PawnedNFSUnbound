@@ -95,7 +95,9 @@ fn modifyHooks(allocator: std.mem.Allocator, hook_src_path: []const u8) !void {
     const hooks_source_file = try std.fs.cwd().openFile(hooks_file_path, .{});
     defer hooks_source_file.close();
 
-    const source_code = try std.zig.readSourceFileToEndAlloc(allocator, hooks_source_file, null);
+    var reader_buffer: [1024]u8 = undefined;
+    var hooks_source_file_reader = hooks_source_file.reader(&reader_buffer);
+    const source_code = try std.zig.readSourceFileToEndAlloc(allocator, &hooks_source_file_reader);
     defer allocator.free(source_code);
 
     const final_source = blk: {

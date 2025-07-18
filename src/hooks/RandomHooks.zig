@@ -262,8 +262,7 @@ fn hookDefWindowProc() callconv(.naked) noreturn {
     asm volatile (heap_state_saver.save_call_hook_template
         :
         : [onHook] "X" (&onDefaultWndProc),
-        : "memory", "cc"
-    );
+        : .{ .memory = true, .cc = true });
 
     asm volatile (heap_state_saver.restore_template);
 
